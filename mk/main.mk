@@ -1,4 +1,4 @@
-# Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+# Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 # file at the top-level directory of this distribution and at
 # http://rust-lang.org/COPYRIGHT.
 #
@@ -13,26 +13,35 @@
 ######################################################################
 
 # The version number
-CFG_RELEASE_NUM=0.13.0
+CFG_RELEASE_NUM=1.13.0
 
-CFG_FILENAME_EXTRA=4e7c5e5c
+# An optional number to put after the label, e.g. '.2' -> '-beta.2'
+# NB Make sure it starts with a dot to conform to semver pre-release
+# versions (section 9)
+CFG_PRERELEASE_VERSION=.1
 
 ifeq ($(CFG_RELEASE_CHANNEL),stable)
 # This is the normal semver version string, e.g. "0.12.0", "0.12.0-nightly"
 CFG_RELEASE=$(CFG_RELEASE_NUM)
 # This is the string used in dist artifact file names, e.g. "0.12.0", "nightly"
 CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)
+CFG_DISABLE_UNSTABLE_FEATURES=1
 endif
 ifeq ($(CFG_RELEASE_CHANNEL),beta)
-CFG_RELEASE=$(CFG_RELEASE_NUM)-beta
-# When building beta/nightly distributables just reuse the same "beta"
-# name so when we upload we'll always override the previous
-# nighly. This doesn't actually impact the version reported by rustc -
-# it's just for file naming.
+CFG_RELEASE=$(CFG_RELEASE_NUM)-beta$(CFG_PRERELEASE_VERSION)
+# When building beta distributables just reuse the same "beta" name
+# so when we upload we'll always override the previous beta. This
+# doesn't actually impact the version reported by rustc - it's just
+# for file naming.
 CFG_PACKAGE_VERS=beta
+CFG_DISABLE_UNSTABLE_FEATURES=1
 endif
 ifeq ($(CFG_RELEASE_CHANNEL),nightly)
 CFG_RELEASE=$(CFG_RELEASE_NUM)-nightly
+# When building nightly distributables just reuse the same "nightly" name
+# so when we upload we'll always override the previous nighly. This
+# doesn't actually impact the version reported by rustc - it's just
+# for file naming.
 CFG_PACKAGE_VERS=nightly
 endif
 ifeq ($(CFG_RELEASE_CHANNEL),dev)
@@ -40,8 +49,40 @@ CFG_RELEASE=$(CFG_RELEASE_NUM)-dev
 CFG_PACKAGE_VERS=$(CFG_RELEASE_NUM)-dev
 endif
 
+# Append a version-dependent hash to each library, so we can install different
+# versions in the same place
+CFG_FILENAME_EXTRA=$(shell printf '%s' $(CFG_RELEASE)$(CFG_EXTRA_FILENAME) | $(CFG_HASH_COMMAND))
+
+# A magic value that allows the compiler to use unstable features during the
+# bootstrap even when doing so would normally be an error because of feature
+# staging or because the build turns on warnings-as-errors and unstable features
+# default to warnings. The build has to match this key in an env var.
+#
+# This value is keyed off the release to ensure that all compilers for one
+# particular release have the same bootstrap key. Note that this is
+# intentionally not "secure" by any definition, this is largely just a deterrent
+# from users enabling unstable features on the stable compiler.
+CFG_BOOTSTRAP_KEY=$(CFG_FILENAME_EXTRA)
+
+# If local-rust is the same as the current version, then force a local-rebuild
+ifdef CFG_ENABLE_LOCAL_RUST
+ifeq ($(CFG_RELEASE),\
+      $(shell $(S)src/etc/local_stage0.sh --print-rustc-release $(CFG_LOCAL_RUST_ROOT)))
+    CFG_INFO := $(info cfg: auto-detected local-rebuild $(CFG_RELEASE))
+    CFG_ENABLE_LOCAL_REBUILD = 1
+endif
+endif
+
+# The stage0 compiler needs to use the previous key recorded in src/stage0.txt,
+# except for local-rebuild when it just uses the same current key.
+ifdef CFG_ENABLE_LOCAL_REBUILD
+CFG_BOOTSTRAP_KEY_STAGE0=$(CFG_BOOTSTRAP_KEY)
+else
+CFG_BOOTSTRAP_KEY_STAGE0=$(shell sed -ne 's/^rustc_key: //p' $(S)src/stage0.txt)
+endif
+
 # The name of the package to use for creating tarballs, installers etc.
-CFG_PACKAGE_NAME=rust-$(CFG_PACKAGE_VERS)
+CFG_PACKAGE_NAME=rustc-$(CFG_PACKAGE_VERS)
 
 # The version string plus commit information - this is what rustc reports
 CFG_VERSION = $(CFG_RELEASE)
@@ -54,7 +95,7 @@ SPACE :=
 SPACE +=
 ifneq ($(CFG_GIT),)
 ifneq ($(wildcard $(subst $(SPACE),\$(SPACE),$(CFG_GIT_DIR))),)
-    CFG_VER_DATE = $(shell git --git-dir='$(CFG_GIT_DIR)' log -1 --pretty=format:'%ci')
+    CFG_VER_DATE = $(shell git --git-dir='$(CFG_GIT_DIR)' log -1 --date=short --pretty=format:'%cd')
     CFG_VER_HASH = $(shell git --git-dir='$(CFG_GIT_DIR)' rev-parse HEAD)
     CFG_SHORT_VER_HASH = $(shell git --git-dir='$(CFG_GIT_DIR)' rev-parse --short=9 HEAD)
     CFG_VERSION += ($(CFG_SHORT_VER_HASH) $(CFG_VER_DATE))
@@ -65,14 +106,11 @@ endif
 # numbers and dots here
 CFG_VERSION_WIN = $(CFG_RELEASE_NUM)
 
+CFG_INFO := $(info cfg: version $(CFG_VERSION))
 
 ######################################################################
 # More configuration
 ######################################################################
-
-# We track all of the object files we might build so that we can find
-# and include all of the .d files in one fell swoop.
-ALL_OBJ_FILES :=
 
 MKFILE_DEPS := config.stamp $(call rwildcard,$(CFG_SRC_DIR)mk/,*)
 MKFILES_FOR_TARBALL:=$(MKFILE_DEPS)
@@ -101,8 +139,7 @@ CFG_RUSTC_FLAGS := $(RUSTFLAGS)
 CFG_GCCISH_CFLAGS :=
 CFG_GCCISH_LINK_FLAGS :=
 
-# Turn off broken quarantine (see jemalloc/jemalloc#161)
-CFG_JEMALLOC_FLAGS := --disable-fill
+CFG_JEMALLOC_FLAGS :=
 
 ifdef CFG_DISABLE_OPTIMIZE
   $(info cfg: disabling rustc optimization (CFG_DISABLE_OPTIMIZE))
@@ -115,17 +152,18 @@ endif
 
 CFG_JEMALLOC_FLAGS += $(JEMALLOC_FLAGS)
 
-ifdef CFG_DISABLE_DEBUG
-  CFG_RUSTC_FLAGS += --cfg ndebug
-  CFG_GCCISH_CFLAGS += -DRUST_NDEBUG
-else
-  $(info cfg: enabling more debugging (CFG_ENABLE_DEBUG))
-  CFG_RUSTC_FLAGS += --cfg debug
-  CFG_GCCISH_CFLAGS += -DRUST_DEBUG
+ifdef CFG_ENABLE_DEBUG_ASSERTIONS
+  $(info cfg: enabling debug assertions (CFG_ENABLE_DEBUG_ASSERTIONS))
+  CFG_RUSTC_FLAGS += -C debug-assertions=on
+endif
+
+ifdef CFG_ENABLE_DEBUGINFO
+  $(info cfg: enabling debuginfo (CFG_ENABLE_DEBUGINFO))
+  CFG_RUSTC_FLAGS += -g
 endif
 
 ifdef SAVE_TEMPS
-  CFG_RUSTC_FLAGS += --save-temps
+  CFG_RUSTC_FLAGS += -C save-temps
 endif
 ifdef ASM_COMMENTS
   CFG_RUSTC_FLAGS += -Z asm-comments
@@ -139,7 +177,7 @@ endif
 ifdef TRACE
   CFG_RUSTC_FLAGS += -Z trace
 endif
-ifdef CFG_ENABLE_RPATH
+ifndef CFG_DISABLE_RPATH
 CFG_RUSTC_FLAGS += -C rpath
 endif
 
@@ -152,21 +190,24 @@ endif
 # that the snapshot will be generated with a statically linked rustc so we only
 # have to worry about the distribution of one file (with its native dynamic
 # dependencies)
-RUSTFLAGS_STAGE0 += -C prefer-dynamic
+RUSTFLAGS_STAGE0 += -C prefer-dynamic -C no-stack-check
 RUSTFLAGS_STAGE1 += -C prefer-dynamic
 RUST_LIB_FLAGS_ST2 += -C prefer-dynamic
 RUST_LIB_FLAGS_ST3 += -C prefer-dynamic
 
 # Landing pads require a lot of codegen. We can get through bootstrapping faster
 # by not emitting them.
-RUSTFLAGS_STAGE0 += -Z no-landing-pads
+
+ifdef CFG_DISABLE_STAGE0_LANDING_PADS
+  RUSTFLAGS_STAGE0 += -Z no-landing-pads
+endif
 
 # platform-specific auto-configuration
 include $(CFG_SRC_DIR)mk/platform.mk
 
 # Run the stage1/2 compilers under valgrind
 ifdef VALGRIND_COMPILE
-  CFG_VALGRIND_COMPILE :=$(CFG_VALGRIND)
+  CFG_VALGRIND_COMPILE := $(CFG_VALGRIND)
 else
   CFG_VALGRIND_COMPILE :=
 endif
@@ -174,14 +215,17 @@ endif
 
 ifndef CFG_DISABLE_VALGRIND_RPASS
   $(info cfg: enabling valgrind run-pass tests (CFG_ENABLE_VALGRIND_RPASS))
+  $(info cfg: valgrind-rpass command set to $(CFG_VALGRIND))
   CFG_VALGRIND_RPASS :=$(CFG_VALGRIND)
 else
+  $(info cfg: disabling valgrind run-pass tests)
   CFG_VALGRIND_RPASS :=
 endif
 
 
 ifdef CFG_ENABLE_VALGRIND
   $(info cfg: enabling valgrind (CFG_ENABLE_VALGRIND))
+  CFG_JEMALLOC_FLAGS += --enable-valgrind
 else
   CFG_VALGRIND :=
 endif
@@ -256,9 +300,17 @@ endif
 # LLVM macros
 ######################################################################
 
-# FIXME: x86-ism
-LLVM_COMPONENTS=x86 arm mips ipo bitreader bitwriter linker asmparser mcjit \
+LLVM_OPTIONAL_COMPONENTS=x86 arm aarch64 mips powerpc pnacl systemz
+LLVM_REQUIRED_COMPONENTS=ipo bitreader bitwriter linker asmparser mcjit \
                 interpreter instrumentation
+
+ifneq ($(CFG_LLVM_ROOT),)
+# Ensure we only try to link targets that the installed LLVM actually has:
+LLVM_COMPONENTS := $(filter $(shell $(CFG_LLVM_ROOT)/bin/llvm-config$(X_$(CFG_BUILD)) --components),\
+			$(LLVM_OPTIONAL_COMPONENTS)) $(LLVM_REQUIRED_COMPONENTS)
+else
+LLVM_COMPONENTS := $(LLVM_OPTIONAL_COMPONENTS) $(LLVM_REQUIRED_COMPONENTS)
+endif
 
 # Only build these LLVM tools
 LLVM_TOOLS=bugpoint llc llvm-ar llvm-as llvm-dis llvm-mc opt llvm-extract
@@ -276,19 +328,27 @@ endif
 # Any rules that depend on LLVM should depend on LLVM_CONFIG
 LLVM_CONFIG_$(1):=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-config$$(X_$(1))
 LLVM_MC_$(1):=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-mc$$(X_$(1))
+LLVM_AR_$(1):=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-ar$$(X_$(1))
 LLVM_VERSION_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --version)
 LLVM_BINDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --bindir)
 LLVM_INCDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --includedir)
 LLVM_LIBDIR_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --libdir)
-LLVM_LIBS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --libs $$(LLVM_COMPONENTS))
+LLVM_LIBDIR_RUSTFLAGS_$(1)=-L native="$$(LLVM_LIBDIR_$(1))"
 LLVM_LDFLAGS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --ldflags)
+ifeq ($$(findstring freebsd,$(1)),freebsd)
 # On FreeBSD, it may search wrong headers (that are for pre-installed LLVM),
 # so we replace -I with -iquote to ensure that it searches bundled LLVM first.
 LLVM_CXXFLAGS_$(1)=$$(subst -I, -iquote , $$(shell "$$(LLVM_CONFIG_$(1))" --cxxflags))
+else
+LLVM_CXXFLAGS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --cxxflags)
+endif
 LLVM_HOST_TRIPLE_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --host-target)
 
 LLVM_AS_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llvm-as$$(X_$(1))
 LLC_$(1)=$$(CFG_LLVM_INST_DIR_$(1))/bin/llc$$(X_$(1))
+
+LLVM_ALL_COMPONENTS_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --components)
+LLVM_VERSION_$(1)=$$(shell "$$(LLVM_CONFIG_$(1))" --version)
 
 endef
 
@@ -303,6 +363,7 @@ $(foreach host,$(CFG_HOST), \
 # exported
 
 export CFG_SRC_DIR
+export CFG_SRC_DIR_RELATIVE
 export CFG_BUILD_DIR
 ifdef CFG_VER_DATE
 export CFG_VER_DATE
@@ -315,15 +376,33 @@ export CFG_VERSION_WIN
 export CFG_RELEASE
 export CFG_PACKAGE_NAME
 export CFG_BUILD
+export CFG_RELEASE_CHANNEL
 export CFG_LLVM_ROOT
 export CFG_PREFIX
 export CFG_LIBDIR
 export CFG_LIBDIR_RELATIVE
 export CFG_DISABLE_INJECT_STD_VERSION
+ifdef CFG_DISABLE_UNSTABLE_FEATURES
+CFG_INFO := $(info cfg: disabling unstable features (CFG_DISABLE_UNSTABLE_FEATURES))
+# Turn on feature-staging
+export CFG_DISABLE_UNSTABLE_FEATURES
+# Subvert unstable feature lints to do the self-build
+export RUSTC_BOOTSTRAP_KEY:=$(CFG_BOOTSTRAP_KEY)
+endif
+export CFG_BOOTSTRAP_KEY
+ifdef CFG_MUSL_ROOT
+export CFG_MUSL_ROOT
+endif
 
 ######################################################################
 # Per-stage targets and runner
 ######################################################################
+
+# Valid setting-strings are 'all', 'none', 'gdb', 'lldb'
+# This 'function' will determine which debugger scripts to copy based on a
+# target triple. See debuggers.mk for more information.
+TRIPLE_TO_DEBUGGER_SCRIPT_SETTING=\
+ $(if $(findstring windows-msvc,$(1)),none,all)
 
 STAGES = 0 1 2 3
 
@@ -335,18 +414,30 @@ define SREQ
 # Destinations of artifacts for the host compiler
 HROOT$(1)_H_$(3) = $(3)/stage$(1)
 HBIN$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/bin
+
 ifeq ($$(CFG_WINDOWSY_$(3)),1)
-HLIB$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/$$(CFG_LIBDIR_RELATIVE)
-else
+# On Windows we always store host runtime libraries in the 'bin' directory because
+# there's no rpath. Target libraries go under $CFG_LIBDIR_RELATIVE (usually 'lib').
+HLIB_RELATIVE$(1)_H_$(3) = bin
+TROOT$(1)_T_$(2)_H_$(3) = $$(HROOT$(1)_H_$(3))/$$(CFG_LIBDIR_RELATIVE)/rustlib/$(2)
+# Remove the next 3 lines after a snapshot
 ifeq ($(1),0)
-HLIB$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/lib
-else
-HLIB$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/$$(CFG_LIBDIR_RELATIVE)
-endif
+RUSTFLAGS_STAGE0 += -L $$(TROOT$(1)_T_$(2)_H_$(3))/lib
 endif
 
-# Destinations of artifacts for target architectures
+else
+
+ifeq ($(1),0)
+HLIB_RELATIVE$(1)_H_$(3) = lib
+else
+HLIB_RELATIVE$(1)_H_$(3) = $$(CFG_LIBDIR_RELATIVE)
+endif
 TROOT$(1)_T_$(2)_H_$(3) = $$(HLIB$(1)_H_$(3))/rustlib/$(2)
+
+endif
+HLIB$(1)_H_$(3) = $$(HROOT$(1)_H_$(3))/$$(HLIB_RELATIVE$(1)_H_$(3))
+
+# Destinations of artifacts for target architectures
 TBIN$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/bin
 TLIB$(1)_T_$(2)_H_$(3) = $$(TROOT$(1)_T_$(2)_H_$(3))/lib
 
@@ -357,29 +448,29 @@ else
 HSREQ$(1)_H_$(3) = \
 	$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
 	$$(MKFILE_DEPS) \
-	tmp/install-debugger-scripts$(1)_H_$(3).done
+	tmp/install-debugger-scripts$(1)_H_$(3)-$$(call TRIPLE_TO_DEBUGGER_SCRIPT_SETTING,$(3)).done
 endif
 
 # Prerequisites for using the stageN compiler to build target artifacts
 TSREQ$(1)_T_$(2)_H_$(3) = \
 	$$(HSREQ$(1)_H_$(3)) \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/libmorestack.a \
-	$$(TLIB$(1)_T_$(2)_H_$(3))/libcompiler-rt.a
+	$$(foreach obj,$$(REQUIRED_OBJECTS_$(2)),\
+		$$(TLIB$(1)_T_$(2)_H_$(3))/$$(obj))
 
 # Prerequisites for a working stageN compiler and libraries, for a specific
 # target
 SREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
-	$$(foreach dep,$$(TARGET_CRATES), \
+	$$(foreach dep,$$(TARGET_CRATES_$(2)), \
 	    $$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep)) \
-	tmp/install-debugger-scripts$(1)_T_$(2)_H_$(3).done
+	tmp/install-debugger-scripts$(1)_T_$(2)_H_$(3)-$$(call TRIPLE_TO_DEBUGGER_SCRIPT_SETTING,$(2)).done
 
 # Prerequisites for a working stageN compiler and complete set of target
 # libraries
 CSREQ$(1)_T_$(2)_H_$(3) = \
 	$$(TSREQ$(1)_T_$(2)_H_$(3)) \
 	$$(HBIN$(1)_H_$(3))/rustdoc$$(X_$(3)) \
-	$$(foreach dep,$$(CRATES),$$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep))
+	$$(foreach dep,$$(HOST_CRATES),$$(TLIB$(1)_T_$(2)_H_$(3))/stamp.$$(dep))
 
 ifeq ($(1),0)
 # Don't run the stage0 compiler under valgrind - that ship has sailed
@@ -424,9 +515,9 @@ endif
 endif
 
 LD_LIBRARY_PATH_ENV_HOSTDIR$(1)_T_$(2)_H_$(3) := \
-    $$(CURDIR)/$$(HLIB$(1)_H_$(3))
+    $$(CURDIR)/$$(HLIB$(1)_H_$(3)):$$(CFG_LLVM_INST_DIR_$(3))/lib
 LD_LIBRARY_PATH_ENV_TARGETDIR$(1)_T_$(2)_H_$(3) := \
-    $$(CURDIR)/$$(TLIB1_T_$(2)_H_$(CFG_BUILD))
+    $$(CURDIR)/$$(TLIB$(1)_T_$(2)_H_$(3))
 
 HOST_RPATH_VAR$(1)_T_$(2)_H_$(3) := \
   $$(LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3))=$$(LD_LIBRARY_PATH_ENV_HOSTDIR$(1)_T_$(2)_H_$(3)):$$$$$$(LD_LIBRARY_PATH_ENV_NAME$(1)_T_$(2)_H_$(3))
@@ -439,18 +530,19 @@ RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(HOST_RPATH_VAR$(1)_T_$(2)_H_$(3))
 # if you're building a cross config, the host->* parts are
 # effectively stage1, since it uses the just-built stage0.
 #
-# This logic is similar to how the LD_LIBRARY_PATH variable must
-# change be slightly different when doing cross compilations.
-# The build doesn't copy over all target libraries into
-# a new directory, so we need to point the library path at
-# the build directory where all the target libraries came
-# from (the stage0 build host). Otherwise the relative rpaths
-# inside of the rustc binary won't get resolved correctly.
+# Also be sure to use the right rpath because we're loading libraries from the
+# CFG_BUILD's stage1 directory for our target, so switch this one instance of
+# `RPATH_VAR` to get the bootstrap working.
 ifeq ($(1),0)
 ifneq ($(strip $(CFG_BUILD)),$(strip $(3)))
 CFGFLAG$(1)_T_$(2)_H_$(3) = stage1
 
-RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(TARGET_RPATH_VAR$(1)_T_$(2)_H_$(3))
+RPATH_VAR$(1)_T_$(2)_H_$(3) := $$(TARGET_RPATH_VAR1_T_$(2)_H_$$(CFG_BUILD))
+else
+ifdef CFG_ENABLE_LOCAL_REBUILD
+# Assume the local-rebuild rustc already has stage1 features too.
+CFGFLAG$(1)_T_$(2)_H_$(3) = stage1
+endif
 endif
 endif
 
@@ -458,14 +550,6 @@ STAGE$(1)_T_$(2)_H_$(3) := \
 	$$(Q)$$(RPATH_VAR$(1)_T_$(2)_H_$(3)) \
 		$$(call CFG_RUN_TARG_$(3),$(1), \
 		$$(CFG_VALGRIND_COMPILE$(1)) \
-		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
-		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3)) \
-		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \
-                $$(RUSTC_FLAGS_$(2))
-
-PERF_STAGE$(1)_T_$(2)_H_$(3) := \
-	$$(Q)$$(call CFG_RUN_TARG_$(3),$(1), \
-		$$(CFG_PERF_TOOL) \
 		$$(HBIN$(1)_H_$(3))/rustc$$(X_$(3)) \
 		--cfg $$(CFGFLAG$(1)_T_$(2)_H_$(3)) \
 		$$(CFG_RUSTC_FLAGS) $$(EXTRAFLAGS_STAGE$(1)) --target=$(2)) \

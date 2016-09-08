@@ -10,6 +10,7 @@
 
 
 trait Foo {
+    fn dummy(&self) { }
 }
 
 fn a(_x: Box<Foo+Send>) {
@@ -20,7 +21,10 @@ fn c(x: Box<Foo+Sync+Send>) {
 }
 
 fn d(x: Box<Foo>) {
-    a(x); //~ ERROR found no bounds
+    a(x); //~  ERROR mismatched types
+          //~| expected type `Box<Foo + Send + 'static>`
+          //~| found type `Box<Foo + 'static>`
+          //~| expected bounds `Send`, found no bounds
 }
 
 fn main() { }

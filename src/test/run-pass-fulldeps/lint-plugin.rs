@@ -12,10 +12,9 @@
 // ignore-stage1
 // ignore-pretty
 
-#![feature(phase)]
-
-#[phase(plugin)]
-extern crate lint_plugin_test;
+#![feature(plugin)]
+#![plugin(lint_plugin_test)]
+#![allow(dead_code)]
 
 fn lintme() { } //~ WARNING item is named 'lintme'
 

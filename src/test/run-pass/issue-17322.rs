@@ -8,13 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::io;
+// pretty-expanded FIXME #23616
 
-fn f(wr: &mut Writer) {
-    wr.write_str("hello").ok().expect("failed");
+#![allow(unknown_features)]
+#![feature(box_syntax, io)]
+
+use std::io::{self, Write};
+
+fn f(wr: &mut Write) {
+    wr.write_all(b"hello").ok().expect("failed");
 }
 
 fn main() {
-    let mut wr = box io::stdout() as Box<Writer + 'static>;
+    let mut wr = box io::stdout() as Box<Write>;
     f(&mut wr);
 }

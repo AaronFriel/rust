@@ -8,15 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(relaxed_adts)]
+
 enum MyOption<T> {
     MySome(T),
     MyNone,
 }
 
 fn main() {
-    match MyOption::MySome(42i) {
-        MyOption::MySome { x: 42i } => (),
-        //~^ ERROR `MyOption::MySome` does not name a struct or a struct variant
+    match MyOption::MySome(42) {
+        MyOption::MySome { x: 42 } => (),
+        //~^ ERROR variant `MyOption::MySome` does not have a field named `x`
+        //~| ERROR pattern does not mention field `0`
         _ => (),
     }
 }

@@ -8,29 +8,31 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
 // aux-build:sepcomp_cci_lib.rs
 
 // Test accessing cross-crate inlined items from multiple compilation units.
 
-extern crate sepcomp_cci_lib;
-use sepcomp_cci_lib::{cci_fn, CCI_STATIC};
 
-fn call1() -> uint {
-    cci_fn() + CCI_STATIC
+extern crate sepcomp_cci_lib;
+use sepcomp_cci_lib::{cci_fn, CCI_CONST};
+
+fn call1() -> usize {
+    cci_fn() + CCI_CONST
 }
 
 mod a {
-    use sepcomp_cci_lib::{cci_fn, CCI_STATIC};
-    pub fn call2() -> uint {
-        cci_fn() + CCI_STATIC
+    use sepcomp_cci_lib::{cci_fn, CCI_CONST};
+    pub fn call2() -> usize {
+        cci_fn() + CCI_CONST
     }
 }
 
 mod b {
-    use sepcomp_cci_lib::{cci_fn, CCI_STATIC};
-    pub fn call3() -> uint {
-        cci_fn() + CCI_STATIC
+    use sepcomp_cci_lib::{cci_fn, CCI_CONST};
+    pub fn call3() -> usize {
+        cci_fn() + CCI_CONST
     }
 }
 

@@ -9,10 +9,14 @@
 // except according to those terms.
 
 
-#[deriving(Clone)]
+#![allow(unknown_features)]
+#![feature(box_patterns)]
+#![feature(box_syntax)]
+
+#[derive(Clone)]
 enum Noun
 {
-    Atom(int),
+    Atom(isize),
     Cell(Box<Noun>, Box<Noun>)
 }
 

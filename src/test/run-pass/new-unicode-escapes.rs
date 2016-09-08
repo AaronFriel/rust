@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+#![feature(collections)]
+
 pub fn main() {
     let s = "\u{2603}";
     assert_eq!(s, "☃");
@@ -16,7 +19,7 @@ pub fn main() {
     assert_eq!(s, "⨐⨁⪠");
 
     let s = "\\{20}";
-    let mut correct_s = String::from_str("\\");
+    let mut correct_s = String::from("\\");
     correct_s.push_str("{20}");
-    assert_eq!(s, correct_s.as_slice());
+    assert_eq!(s, correct_s);
 }

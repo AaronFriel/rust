@@ -7,27 +7,57 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-#![feature(globs, unsafe_destructor, macro_rules, slicing_syntax)]
-#![feature(unboxed_closures)]
+
+#![deny(warnings)]
+
+#![feature(borrow_state)]
+#![feature(box_syntax)]
+#![feature(cell_extras)]
+#![feature(char_escape_debug)]
+#![feature(const_fn)]
+#![feature(core_private_bignum)]
+#![feature(core_private_diy_float)]
+#![feature(dec2flt)]
+#![feature(decode_utf8)]
+#![feature(fixed_size_array)]
+#![feature(flt2dec)]
+#![feature(libc)]
+#![feature(nonzero)]
+#![feature(rand)]
+#![feature(raw)]
+#![feature(sip_hash_13)]
+#![feature(slice_patterns)]
+#![feature(step_by)]
+#![feature(test)]
+#![feature(try_from)]
+#![feature(unicode)]
+#![feature(unique)]
+#![feature(iter_max_by)]
+#![feature(iter_min_by)]
 
 extern crate core;
 extern crate test;
 extern crate libc;
+extern crate rustc_unicode;
+extern crate rand;
 
 mod any;
+mod array;
 mod atomic;
 mod cell;
 mod char;
+mod clone;
 mod cmp;
-mod finally;
 mod fmt;
+mod hash;
+mod intrinsics;
 mod iter;
 mod mem;
+mod nonzero;
 mod num;
 mod ops;
 mod option;
 mod ptr;
-mod raw;
 mod result;
 mod slice;
 mod str;

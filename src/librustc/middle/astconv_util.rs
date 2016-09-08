@@ -14,76 +14,70 @@
  * Almost certainly this could (and should) be refactored out of existence.
  */
 
-use middle::def;
-use middle::ty::{mod, Ty};
-use syntax::ast;
-use util::ppaux::Repr;
+use hir::def::Def;
+use ty::{Ty, TyCtxt};
 
-pub const NO_REGIONS: uint = 1;
-pub const NO_TPS: uint = 2;
+use syntax_pos::Span;
+use hir as ast;
 
-pub fn check_path_args(tcx: &ty::ctxt,
-                       path: &ast::Path,
-                       flags: uint) {
-    if (flags & NO_TPS) != 0u {
-        if path.segments.iter().any(|s| s.parameters.has_types()) {
-            span_err!(tcx.sess, path.span, E0109,
-                "type parameters are not allowed on this type");
-        }
-    }
-
-    if (flags & NO_REGIONS) != 0u {
-        if path.segments.iter().any(|s| s.parameters.has_lifetimes()) {
-            span_err!(tcx.sess, path.span, E0110,
-                "region parameters are not allowed on this type");
-        }
-    }
-}
-
-pub fn ast_ty_to_prim_ty<'tcx>(tcx: &ty::ctxt<'tcx>, ast_ty: &ast::Ty)
-                               -> Option<Ty<'tcx>> {
-    match ast_ty.node {
-        ast::TyPath(ref path, id) => {
-            let a_def = match tcx.def_map.borrow().get(&id) {
-                None => {
-                    tcx.sess.span_bug(ast_ty.span,
-                                      format!("unbound path {}",
-                                              path.repr(tcx)).as_slice())
-                }
-                Some(&d) => d
-            };
-            match a_def {
-                def::DefPrimTy(nty) => {
-                    match nty {
-                        ast::TyBool => {
-                            check_path_args(tcx, path, NO_TPS | NO_REGIONS);
-                            Some(ty::mk_bool())
-                        }
-                        ast::TyChar => {
-                            check_path_args(tcx, path, NO_TPS | NO_REGIONS);
-                            Some(ty::mk_char())
-                        }
-                        ast::TyInt(it) => {
-                            check_path_args(tcx, path, NO_TPS | NO_REGIONS);
-                            Some(ty::mk_mach_int(it))
-                        }
-                        ast::TyUint(uit) => {
-                            check_path_args(tcx, path, NO_TPS | NO_REGIONS);
-                            Some(ty::mk_mach_uint(uit))
-                        }
-                        ast::TyFloat(ft) => {
-                            check_path_args(tcx, path, NO_TPS | NO_REGIONS);
-                            Some(ty::mk_mach_float(ft))
-                        }
-                        ast::TyStr => {
-                            Some(ty::mk_str(tcx))
-                        }
-                    }
-                }
-                _ => None
+impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
+    pub fn prohibit_type_params(self, segments: &[ast::PathSegment]) {
+        for segment in segments {
+            for typ in segment.parameters.types() {
+                struct_span_err!(self.sess, typ.span, E0109,
+                                 "type parameters are not allowed on this type")
+                    .span_label(typ.span, &format!("type parameter not allowed"))
+                    .emit();
+                break;
+            }
+            for lifetime in segment.parameters.lifetimes() {
+                struct_span_err!(self.sess, lifetime.span, E0110,
+                                 "lifetime parameters are not allowed on this type")
+                    .span_label(lifetime.span,
+                                &format!("lifetime parameter not allowed on this type"))
+                    .emit();
+                break;
+            }
+            for binding in segment.parameters.bindings() {
+                self.prohibit_projection(binding.span);
+                break;
             }
         }
-        _ => None
+    }
+
+    pub fn prohibit_projection(self, span: Span)
+    {
+        let mut err = struct_span_err!(self.sess, span, E0229,
+                                       "associated type bindings are not allowed here");
+        err.span_label(span, &format!("associate type not allowed here")).emit();
+    }
+
+    pub fn prim_ty_to_ty(self,
+                         segments: &[ast::PathSegment],
+                         nty: ast::PrimTy)
+                         -> Ty<'tcx> {
+        self.prohibit_type_params(segments);
+        match nty {
+            ast::TyBool => self.types.bool,
+            ast::TyChar => self.types.char,
+            ast::TyInt(it) => self.mk_mach_int(it),
+            ast::TyUint(uit) => self.mk_mach_uint(uit),
+            ast::TyFloat(ft) => self.mk_mach_float(ft),
+            ast::TyStr => self.mk_str()
+        }
+    }
+
+    /// If a type in the AST is a primitive type, return the ty::Ty corresponding
+    /// to it.
+    pub fn ast_ty_to_prim_ty(self, ast_ty: &ast::Ty) -> Option<Ty<'tcx>> {
+        if let ast::TyPath(None, ref path) = ast_ty.node {
+            if let Def::PrimTy(nty) = self.expect_def(ast_ty.id) {
+                Some(self.prim_ty_to_ty(&path.segments, nty))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }
-

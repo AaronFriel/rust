@@ -9,11 +9,11 @@
 // except according to those terms.
 
 trait Groom {
-    fn shave();
+    fn shave(other: usize);
 }
 
 pub struct cat {
-  whiskers: int,
+  whiskers: isize,
 }
 
 pub enum MaybeDog {
@@ -30,13 +30,14 @@ impl MaybeDog {
 }
 
 impl Groom for cat {
-  fn shave(&self, other: uint) {
+  fn shave(other: usize) {
     whiskers -= other;
-    //~^ ERROR: unresolved name `whiskers`. Did you mean `self.whiskers`?
+    //~^ ERROR: unresolved name `whiskers`
+    //~| HELP this is an associated function
     shave(4);
     //~^ ERROR: unresolved name `shave`. Did you mean to call `Groom::shave`?
     purr();
-    //~^ ERROR: unresolved name `purr`. Did you mean to call `self.purr`?
+    //~^ ERROR: unresolved name `purr`
   }
 }
 
@@ -45,27 +46,29 @@ impl cat {
 
     fn purr_louder() {
         static_method();
-        //~^ ERROR: unresolved name `static_method`. Did you mean to call `cat::static_method`
+        //~^ ERROR: unresolved name `static_method`
         purr();
-        //~^ ERROR: unresolved name `purr`. Did you mean to call `self.purr`?
+        //~^ ERROR: unresolved name `purr`
         purr();
-        //~^ ERROR: unresolved name `purr`. Did you mean to call `self.purr`?
+        //~^ ERROR: unresolved name `purr`
         purr();
-        //~^ ERROR: unresolved name `purr`. Did you mean to call `self.purr`?
+        //~^ ERROR: unresolved name `purr`
     }
 }
 
 impl cat {
   fn meow() {
     if self.whiskers > 3 {
-        //~^ ERROR: `self` is not available in a static method. Maybe a `self` argument is missing?
+        //~^ ERROR `self` is not available in a static method [E0424]
+        //~| NOTE not available in static method
+        //~| NOTE maybe a `self` argument is missing?
         println!("MEOW");
     }
   }
 
   fn purr(&self) {
     grow_older();
-    //~^ ERROR: unresolved name `grow_older`. Did you mean to call `cat::grow_older`
+    //~^ ERROR: unresolved name `grow_older`
     shave();
     //~^ ERROR: unresolved name `shave`
   }
@@ -75,16 +78,18 @@ impl cat {
     //~^ ERROR: unresolved name `whiskers`. Did you mean `self.whiskers`?
   }
 
-  pub fn grow_older(other:uint) {
+  pub fn grow_older(other:usize) {
     whiskers = 4;
-    //~^ ERROR: unresolved name `whiskers`. Did you mean `self.whiskers`?
+    //~^ ERROR: unresolved name `whiskers`
+    //~| HELP this is an associated function
     purr_louder();
-    //~^ ERROR: unresolved name `purr_louder`. Did you mean to call `cat::purr_louder`
+    //~^ ERROR: unresolved name `purr_louder`
   }
 }
 
 fn main() {
     self += 1;
     //~^ ERROR: unresolved name `self`
+    //~| HELP: module `self`
     // it's a bug if this suggests a missing `self` as we're not in a method
 }

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// no-prefer-dynamic
+
 static mut DROP_RAN: bool = false;
 
 struct Foo;
@@ -17,16 +19,17 @@ impl Drop for Foo {
     }
 }
 
-trait Trait {}
+trait Trait { fn dummy(&self) { } }
 impl Trait for Foo {}
 
-struct Fat<Sized? T> {
+struct Fat<T: ?Sized> {
     f: T
 }
 
 pub fn main() {
     {
-        let _x: Box<Fat<Trait>> = box Fat { f: Foo };
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        let _x: Box<Fat<Trait>> = Box::<Fat<Foo>>::new(Fat { f: Foo });
     }
     unsafe {
         assert!(DROP_RAN);

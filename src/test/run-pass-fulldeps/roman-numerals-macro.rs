@@ -11,10 +11,8 @@
 // aux-build:roman_numerals.rs
 // ignore-stage1
 
-#![feature(phase)]
-
-#[phase(plugin)]
-extern crate roman_numerals;
+#![feature(plugin)]
+#![plugin(roman_numerals)]
 
 pub fn main() {
     assert_eq!(rn!(MMXV), 2015);

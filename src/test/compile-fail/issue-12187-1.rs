@@ -1,4 +1,4 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -14,5 +14,7 @@ fn new<T>() -> &'static T {
 
 fn main() {
     let &v = new();
-    //~^ ERROR type annotations required
+    //~^ ERROR unable to infer enough type information about `_` [E0282]
+    //~| NOTE cannot infer type for `_`
+    //~| NOTE type annotations or generic parameter binding
 }

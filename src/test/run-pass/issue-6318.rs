@@ -8,12 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
 pub enum Thing {
     A(Box<Foo+'static>)
 }
 
-pub trait Foo {}
+pub trait Foo {
+    fn dummy(&self) { }
+}
 
 pub struct Struct;
 
@@ -21,7 +27,6 @@ impl Foo for Struct {}
 
 pub fn main() {
     match Thing::A(box Struct as Box<Foo+'static>) {
-        Thing::A(_a) => 0i,
+        Thing::A(_a) => 0,
     };
 }
-

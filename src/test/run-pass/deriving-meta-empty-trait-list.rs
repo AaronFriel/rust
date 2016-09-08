@@ -10,11 +10,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_code)]
 
-#[deriving]   //~ WARNING empty trait list in `deriving`
+#[derive]   //~ WARNING empty trait list in `derive`
 struct Foo;
 
-#[deriving()] //~ WARNING empty trait list in `deriving`
+#[derive()] //~ WARNING empty trait list in `derive`
 struct Bar;
 
 pub fn main() {}

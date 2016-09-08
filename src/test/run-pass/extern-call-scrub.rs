@@ -12,8 +12,12 @@
 // make sure the stack pointers are maintained properly in both
 // directions
 
+// ignore-emscripten no threads support
+
+#![feature(libc, std_misc)]
+
 extern crate libc;
-use std::task;
+use std::thread;
 
 mod rustrt {
     extern crate libc;
@@ -42,11 +46,11 @@ fn count(n: libc::uintptr_t) -> libc::uintptr_t {
 }
 
 pub fn main() {
-    // Make sure we're on a task with small Rust stacks (main currently
+    // Make sure we're on a thread with small Rust stacks (main currently
     // has a large stack)
-    task::spawn(move|| {
+    thread::spawn(move|| {
         let result = count(12);
         println!("result = {}", result);
         assert_eq!(result, 2048);
-    });
+    }).join();
 }

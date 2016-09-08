@@ -8,12 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(staged_api)]
 #![deny(deprecated)]
+
+#![unstable(feature = "test_feature", issue = "0")]
 
 struct Foo;
 
 impl Foo {
-    #[deprecated]
+    #[unstable(feature = "test_feature", issue = "0")]
+    #[rustc_deprecated(since = "1.0.0", reason = "text")]
     fn foo(self) {}
 }
 

@@ -14,11 +14,12 @@
 use borrowck::*;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization as mc;
+use rustc::middle::mem_categorization::Categorization;
 use rustc::middle::region;
-use rustc::middle::ty;
-use rustc::util::ppaux::Repr;
+use rustc::ty;
+
 use syntax::ast;
-use syntax::codemap::Span;
+use syntax_pos::Span;
 
 type R = Result<(),()>;
 
@@ -27,14 +28,14 @@ pub fn guarantee_lifetime<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                     span: Span,
                                     cause: euv::LoanCause,
                                     cmt: mc::cmt<'tcx>,
-                                    loan_region: ty::Region,
+                                    loan_region: &'tcx ty::Region,
                                     _: ty::BorrowKind)
                                     -> Result<(),()> {
     //! Reports error if `loan_region` is larger than S
     //! where S is `item_scope` if `cmt` is an upvar,
     //! and is scope of `cmt` otherwise.
-    debug!("guarantee_lifetime(cmt={}, loan_region={})",
-           cmt.repr(bccx.tcx), loan_region.repr(bccx.tcx));
+    debug!("guarantee_lifetime(cmt={:?}, loan_region={:?})",
+           cmt, loan_region);
     let ctxt = GuaranteeLifetimeContext {bccx: bccx,
                                          item_scope: item_scope,
                                          span: span,
@@ -55,7 +56,7 @@ struct GuaranteeLifetimeContext<'a, 'tcx: 'a> {
 
     span: Span,
     cause: euv::LoanCause,
-    loan_region: ty::Region,
+    loan_region: &'tcx ty::Region,
     cmt_original: mc::cmt<'tcx>
 }
 
@@ -65,81 +66,78 @@ impl<'a, 'tcx> GuaranteeLifetimeContext<'a, 'tcx> {
         //! Main routine. Walks down `cmt` until we find the
         //! "guarantor".  Reports an error if `self.loan_region` is
         //! larger than scope of `cmt`.
-        debug!("guarantee_lifetime.check(cmt={}, loan_region={})",
-               cmt.repr(self.bccx.tcx),
-               self.loan_region.repr(self.bccx.tcx));
+        debug!("guarantee_lifetime.check(cmt={:?}, loan_region={:?})",
+               cmt,
+               self.loan_region);
 
         match cmt.cat {
-            mc::cat_rvalue(..) |
-            mc::cat_local(..) |                         // L-Local
-            mc::cat_upvar(..) |
-            mc::cat_deref(_, _, mc::BorrowedPtr(..)) |  // L-Deref-Borrowed
-            mc::cat_deref(_, _, mc::Implicit(..)) |
-            mc::cat_deref(_, _, mc::UnsafePtr(..)) => {
+            Categorization::Rvalue(..) |
+            Categorization::Local(..) |                         // L-Local
+            Categorization::Upvar(..) |
+            Categorization::Deref(.., mc::BorrowedPtr(..)) |  // L-Deref-Borrowed
+            Categorization::Deref(.., mc::Implicit(..)) |
+            Categorization::Deref(.., mc::UnsafePtr(..)) => {
                 self.check_scope(self.scope(cmt))
             }
 
-            mc::cat_static_item => {
+            Categorization::StaticItem => {
                 Ok(())
             }
 
-            mc::cat_downcast(ref base, _) |
-            mc::cat_deref(ref base, _, mc::OwnedPtr) |     // L-Deref-Send
-            mc::cat_interior(ref base, _) => {             // L-Field
+            Categorization::Downcast(ref base, _) |
+            Categorization::Deref(ref base, _, mc::Unique) |     // L-Deref-Send
+            Categorization::Interior(ref base, _) => {             // L-Field
                 self.check(base, discr_scope)
             }
         }
     }
 
-    fn check_scope(&self, max_scope: ty::Region) -> R {
+    fn check_scope(&self, max_scope: &'tcx ty::Region) -> R {
         //! Reports an error if `loan_region` is larger than `max_scope`
 
         if !self.bccx.is_subregion_of(self.loan_region, max_scope) {
-            Err(self.report_error(err_out_of_scope(max_scope, self.loan_region)))
+            Err(self.report_error(err_out_of_scope(max_scope, self.loan_region, self.cause)))
         } else {
             Ok(())
         }
     }
 
-    fn scope(&self, cmt: &mc::cmt) -> ty::Region {
+    fn scope(&self, cmt: &mc::cmt<'tcx>) -> &'tcx ty::Region {
         //! Returns the maximal region scope for the which the
         //! lvalue `cmt` is guaranteed to be valid without any
         //! rooting etc, and presuming `cmt` is not mutated.
 
-        // See the SCOPE(LV) function in doc.rs
-
         match cmt.cat {
-            mc::cat_rvalue(temp_scope) => {
+            Categorization::Rvalue(temp_scope) => {
                 temp_scope
             }
-            mc::cat_upvar(..) => {
-                ty::ReScope(self.item_scope)
+            Categorization::Upvar(..) => {
+                self.bccx.tcx.mk_region(ty::ReScope(self.item_scope))
             }
-            mc::cat_static_item => {
-                ty::ReStatic
+            Categorization::Local(local_id) => {
+                self.bccx.tcx.mk_region(ty::ReScope(
+                    self.bccx.tcx.region_maps.var_scope(local_id)))
             }
-            mc::cat_local(local_id) => {
-                ty::ReScope(self.bccx.tcx.region_maps.var_scope(local_id))
+            Categorization::StaticItem |
+            Categorization::Deref(.., mc::UnsafePtr(..)) => {
+                self.bccx.tcx.mk_region(ty::ReStatic)
             }
-            mc::cat_deref(_, _, mc::UnsafePtr(..)) => {
-                ty::ReStatic
-            }
-            mc::cat_deref(_, _, mc::BorrowedPtr(_, r)) |
-            mc::cat_deref(_, _, mc::Implicit(_, r)) => {
+            Categorization::Deref(.., mc::BorrowedPtr(_, r)) |
+            Categorization::Deref(.., mc::Implicit(_, r)) => {
                 r
             }
-            mc::cat_downcast(ref cmt, _) |
-            mc::cat_deref(ref cmt, _, mc::OwnedPtr) |
-            mc::cat_interior(ref cmt, _) => {
+            Categorization::Downcast(ref cmt, _) |
+            Categorization::Deref(ref cmt, _, mc::Unique) |
+            Categorization::Interior(ref cmt, _) => {
                 self.scope(cmt)
             }
         }
     }
 
-    fn report_error(&self, code: bckerr_code) {
+    fn report_error(&self, code: bckerr_code<'tcx>) {
         self.bccx.report(BckError { cmt: self.cmt_original.clone(),
                                     span: self.span,
-                                    cause: self.cause,
+                                    cause: BorrowViolation(self.cause),
                                     code: code });
     }
 }

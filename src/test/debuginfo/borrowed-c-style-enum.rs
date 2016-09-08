@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 
 // compile-flags:-g
 // min-lldb-version: 310
@@ -41,6 +40,8 @@
 // lldb-check:[...]$2 = TheC
 
 #![allow(unused_variables)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 enum ABC { TheA, TheB, TheC }
 

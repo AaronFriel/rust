@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(core_intrinsics)]
+
 use std::intrinsics::assume;
 
 unsafe fn f(x: i32) -> i32 {
@@ -22,4 +24,3 @@ fn main() {
     let x = unsafe { f(34) };
     assert_eq!(x, 42);
 }
-

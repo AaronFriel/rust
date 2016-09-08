@@ -11,7 +11,6 @@
 // LLDB can't handle zero-sized values
 // ignore-lldb
 
-// ignore-android: FIXME(#10381)
 
 // compile-flags:-g
 // gdb-command:run
@@ -23,6 +22,8 @@
 // gdb-check:$2 = {<No data fields>}
 
 #![allow(unused_variables)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 enum ANilEnum {}
 enum AnotherNilEnum {}

@@ -8,9 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
 
-struct X(Box<int>);
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+#![feature(box_patterns)]
+
+use std::ops::{Deref, DerefMut};
+
+struct X(Box<isize>);
 
 static mut DESTRUCTOR_RAN: bool = false;
 
@@ -23,25 +28,27 @@ impl Drop for X {
     }
 }
 
-impl Deref<int> for X {
-    fn deref(&self) -> &int {
+impl Deref for X {
+    type Target = isize;
+
+    fn deref(&self) -> &isize {
         let &X(box ref x) = self;
         x
     }
 }
 
-impl DerefMut<int> for X {
-    fn deref_mut(&mut self) -> &mut int {
-        let &X(box ref mut x) = self;
+impl DerefMut for X {
+    fn deref_mut(&mut self) -> &mut isize {
+        let &mut X(box ref mut x) = self;
         x
     }
 }
 
 fn main() {
     {
-        let mut test = X(box 5i);
+        let mut test = X(box 5);
         {
-            let mut change = |&mut:| { *test = 10 };
+            let mut change = || { *test = 10 };
             change();
         }
         assert_eq!(*test, 10);

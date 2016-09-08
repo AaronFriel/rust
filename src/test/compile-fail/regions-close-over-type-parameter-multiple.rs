@@ -8,10 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 // Various tests where we over type parameters with multiple lifetime
 // bounds.
 
-trait SomeTrait { fn get(&self) -> int; }
+trait SomeTrait { fn get(&self) -> isize; }
 
 fn make_object_good1<'a,'b,A:SomeTrait+'a+'b>(v: A) -> Box<SomeTrait+'a> {
     // A outlives 'a AND 'b...
@@ -25,7 +27,7 @@ fn make_object_good2<'a,'b,A:SomeTrait+'a+'b>(v: A) -> Box<SomeTrait+'b> {
 
 fn make_object_bad<'a,'b,'c,A:SomeTrait+'a+'b>(v: A) -> Box<SomeTrait+'c> {
     // A outlives 'a AND 'b...but not 'c.
-    box v as Box<SomeTrait+'a> //~ ERROR mismatched types
+    box v as Box<SomeTrait+'a> //~ ERROR lifetime bound not satisfied
 }
 
 fn main() {

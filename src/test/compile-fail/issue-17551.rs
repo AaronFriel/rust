@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
+use std::marker;
 
-struct B<T>;
+struct B<T>(marker::PhantomData<T>);
 
 fn main() {
-    let foo = B; //~ ERROR unable to infer enough type information
-    let closure = |:| foo;
+    let foo = B(marker::PhantomData); //~ ERROR unable to infer enough type information
+    let closure = || foo;
 }

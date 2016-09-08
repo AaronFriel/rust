@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
 struct Bencher;
 
@@ -18,9 +18,8 @@ fn warm_up<'a, F>(f: F) where F: Fn(&'a mut Bencher) {
 
 fn main() {
     // ICE trigger
-    warm_up(|&: b: &mut Bencher| () );
+    warm_up(|b: &mut Bencher| () );
 
     // OK
-    warm_up(|&: b| () );
+    warm_up(|b| () );
 }
-

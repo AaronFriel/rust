@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -79,11 +78,14 @@
 // lldb-command:continue
 
 #![allow(unused_variables)]
+#![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 struct Struct {
-    a: int,
+    a: isize,
     b: f64,
-    c: uint
+    c: usize
 }
 
 fn main() {
@@ -97,12 +99,12 @@ fn main() {
     };
 
     let struct_ref = &a_struct;
-    let owned = box 6;
+    let owned: Box<_> = box 6;
 
-    let closure = || {
+    let mut closure = || {
         let closure_local = 8;
 
-        let nested_closure = || {
+        let mut nested_closure = || {
             zzz(); // #break
             variable = constant + a_struct.a + struct_ref.a + *owned + closure_local;
         };

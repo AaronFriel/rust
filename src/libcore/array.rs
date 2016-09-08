@@ -11,98 +11,197 @@
 //! Implementations of things like `Eq` for fixed-length arrays
 //! up to a certain length. Eventually we should able to generalize
 //! to all lengths.
+//!
+//! *[See also the array primitive type](../../std/primitive.array.html).*
 
-#![experimental] // not yet reviewed
+#![unstable(feature = "fixed_size_array",
+            reason = "traits and impls are better expressed through generic \
+                      integer constants",
+            issue = "27778")]
 
-use clone::Clone;
-use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
+use borrow::{Borrow, BorrowMut};
+use cmp::Ordering;
 use fmt;
-use kinds::Copy;
-use ops::Deref;
-use option::Option;
+use hash::{Hash, self};
+use marker::Unsize;
+use slice::{Iter, IterMut};
+
+/// Utility trait implemented only on arrays of fixed size
+///
+/// This trait can be used to implement other traits on fixed-size arrays
+/// without causing much metadata bloat.
+///
+/// The trait is marked unsafe in order to restrict implementors to fixed-size
+/// arrays. User of this trait can assume that implementors have the exact
+/// layout in memory of a fixed size array (for example, for unsafe
+/// initialization).
+///
+/// Note that the traits AsRef and AsMut provide similar methods for types that
+/// may not be fixed-size arrays. Implementors should prefer those traits
+/// instead.
+pub unsafe trait FixedSizeArray<T> {
+    /// Converts the array to immutable slice
+    fn as_slice(&self) -> &[T];
+    /// Converts the array to mutable slice
+    fn as_mut_slice(&mut self) -> &mut [T];
+}
+
+unsafe impl<T, A: Unsize<[T]>> FixedSizeArray<T> for A {
+    #[inline]
+    fn as_slice(&self) -> &[T] {
+        self
+    }
+    #[inline]
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        self
+    }
+}
+
+macro_rules! __impl_slice_eq1 {
+    ($Lhs: ty, $Rhs: ty) => {
+        __impl_slice_eq1! { $Lhs, $Rhs, Sized }
+    };
+    ($Lhs: ty, $Rhs: ty, $Bound: ident) => {
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl<'a, 'b, A: $Bound, B> PartialEq<$Rhs> for $Lhs where A: PartialEq<B> {
+            #[inline]
+            fn eq(&self, other: &$Rhs) -> bool { self[..] == other[..] }
+            #[inline]
+            fn ne(&self, other: &$Rhs) -> bool { self[..] != other[..] }
+        }
+    }
+}
+
+macro_rules! __impl_slice_eq2 {
+    ($Lhs: ty, $Rhs: ty) => {
+        __impl_slice_eq2! { $Lhs, $Rhs, Sized }
+    };
+    ($Lhs: ty, $Rhs: ty, $Bound: ident) => {
+        __impl_slice_eq1!($Lhs, $Rhs, $Bound);
+
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl<'a, 'b, A: $Bound, B> PartialEq<$Lhs> for $Rhs where B: PartialEq<A> {
+            #[inline]
+            fn eq(&self, other: &$Lhs) -> bool { self[..] == other[..] }
+            #[inline]
+            fn ne(&self, other: &$Lhs) -> bool { self[..] != other[..] }
+        }
+    }
+}
 
 // macro for implementing n-ary tuple functions and operations
 macro_rules! array_impls {
     ($($N:expr)+) => {
         $(
-            #[unstable = "waiting for Clone to stabilize"]
-            impl<T:Copy> Clone for [T, ..$N] {
-                fn clone(&self) -> [T, ..$N] {
+            impl<T> AsRef<[T]> for [T; $N] {
+                #[inline]
+                fn as_ref(&self) -> &[T] {
+                    &self[..]
+                }
+            }
+
+            impl<T> AsMut<[T]> for [T; $N] {
+                #[inline]
+                fn as_mut(&mut self) -> &mut [T] {
+                    &mut self[..]
+                }
+            }
+
+            #[stable(feature = "array_borrow", since = "1.4.0")]
+            impl<T> Borrow<[T]> for [T; $N] {
+                fn borrow(&self) -> &[T] {
+                    self
+                }
+            }
+
+            #[stable(feature = "array_borrow", since = "1.4.0")]
+            impl<T> BorrowMut<[T]> for [T; $N] {
+                fn borrow_mut(&mut self) -> &mut [T] {
+                    self
+                }
+            }
+
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T:Copy> Clone for [T; $N] {
+                fn clone(&self) -> [T; $N] {
                     *self
                 }
             }
 
-            #[unstable = "waiting for Show to stabilize"]
-            impl<T:fmt::Show> fmt::Show for [T, ..$N] {
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T: Hash> Hash for [T; $N] {
+                fn hash<H: hash::Hasher>(&self, state: &mut H) {
+                    Hash::hash(&self[..], state)
+                }
+            }
+
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T: fmt::Debug> fmt::Debug for [T; $N] {
                 fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    fmt::Show::fmt(&self[], f)
+                    fmt::Debug::fmt(&&self[..], f)
                 }
             }
 
-            #[unstable = "waiting for PartialEq to stabilize"]
-            impl<A, B> PartialEq<[B, ..$N]> for [A, ..$N] where A: PartialEq<B> {
-                #[inline]
-                fn eq(&self, other: &[B, ..$N]) -> bool {
-                    self[] == other[]
-                }
-                #[inline]
-                fn ne(&self, other: &[B, ..$N]) -> bool {
-                    self[] != other[]
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<'a, T> IntoIterator for &'a [T; $N] {
+                type Item = &'a T;
+                type IntoIter = Iter<'a, T>;
+
+                fn into_iter(self) -> Iter<'a, T> {
+                    self.iter()
                 }
             }
 
-            impl<'a, A, B, Rhs> PartialEq<Rhs> for [A, ..$N] where
-                A: PartialEq<B>,
-                Rhs: Deref<[B]>,
-            {
-                #[inline(always)]
-                fn eq(&self, other: &Rhs) -> bool { PartialEq::eq(self[], &**other) }
-                #[inline(always)]
-                fn ne(&self, other: &Rhs) -> bool { PartialEq::ne(self[], &**other) }
-            }
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<'a, T> IntoIterator for &'a mut [T; $N] {
+                type Item = &'a mut T;
+                type IntoIter = IterMut<'a, T>;
 
-            impl<'a, A, B, Lhs> PartialEq<[B, ..$N]> for Lhs where
-                A: PartialEq<B>,
-                Lhs: Deref<[A]>
-            {
-                #[inline(always)]
-                fn eq(&self, other: &[B, ..$N]) -> bool { PartialEq::eq(&**self, other[]) }
-                #[inline(always)]
-                fn ne(&self, other: &[B, ..$N]) -> bool { PartialEq::ne(&**self, other[]) }
-            }
-
-            #[unstable = "waiting for Eq to stabilize"]
-            impl<T:Eq> Eq for [T, ..$N] { }
-
-            #[unstable = "waiting for PartialOrd to stabilize"]
-            impl<T:PartialOrd> PartialOrd for [T, ..$N] {
-                #[inline]
-                fn partial_cmp(&self, other: &[T, ..$N]) -> Option<Ordering> {
-                    PartialOrd::partial_cmp(&self[], &other[])
-                }
-                #[inline]
-                fn lt(&self, other: &[T, ..$N]) -> bool {
-                    PartialOrd::lt(&self[], &other[])
-                }
-                #[inline]
-                fn le(&self, other: &[T, ..$N]) -> bool {
-                    PartialOrd::le(&self[], &other[])
-                }
-                #[inline]
-                fn ge(&self, other: &[T, ..$N]) -> bool {
-                    PartialOrd::ge(&self[], &other[])
-                }
-                #[inline]
-                fn gt(&self, other: &[T, ..$N]) -> bool {
-                    PartialOrd::gt(&self[], &other[])
+                fn into_iter(self) -> IterMut<'a, T> {
+                    self.iter_mut()
                 }
             }
 
-            #[unstable = "waiting for Ord to stabilize"]
-            impl<T:Ord> Ord for [T, ..$N] {
+            // NOTE: some less important impls are omitted to reduce code bloat
+            __impl_slice_eq1! { [A; $N], [B; $N] }
+            __impl_slice_eq2! { [A; $N], [B] }
+            __impl_slice_eq2! { [A; $N], &'b [B] }
+            __impl_slice_eq2! { [A; $N], &'b mut [B] }
+            // __impl_slice_eq2! { [A; $N], &'b [B; $N] }
+            // __impl_slice_eq2! { [A; $N], &'b mut [B; $N] }
+
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T:Eq> Eq for [T; $N] { }
+
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T:PartialOrd> PartialOrd for [T; $N] {
                 #[inline]
-                fn cmp(&self, other: &[T, ..$N]) -> Ordering {
-                    Ord::cmp(&self[], &other[])
+                fn partial_cmp(&self, other: &[T; $N]) -> Option<Ordering> {
+                    PartialOrd::partial_cmp(&&self[..], &&other[..])
+                }
+                #[inline]
+                fn lt(&self, other: &[T; $N]) -> bool {
+                    PartialOrd::lt(&&self[..], &&other[..])
+                }
+                #[inline]
+                fn le(&self, other: &[T; $N]) -> bool {
+                    PartialOrd::le(&&self[..], &&other[..])
+                }
+                #[inline]
+                fn ge(&self, other: &[T; $N]) -> bool {
+                    PartialOrd::ge(&&self[..], &&other[..])
+                }
+                #[inline]
+                fn gt(&self, other: &[T; $N]) -> bool {
+                    PartialOrd::gt(&&self[..], &&other[..])
+                }
+            }
+
+            #[stable(feature = "rust1", since = "1.0.0")]
+            impl<T:Ord> Ord for [T; $N] {
+                #[inline]
+                fn cmp(&self, other: &[T; $N]) -> Ordering {
+                    Ord::cmp(&&self[..], &&other[..])
                 }
             }
         )+
@@ -116,3 +215,25 @@ array_impls! {
     30 31 32
 }
 
+// The Default impls cannot be generated using the array_impls! macro because
+// they require array literals.
+
+macro_rules! array_impl_default {
+    {$n:expr, $t:ident $($ts:ident)*} => {
+        #[stable(since = "1.4.0", feature = "array_default")]
+        impl<T> Default for [T; $n] where T: Default {
+            fn default() -> [T; $n] {
+                [$t::default(), $($ts::default()),*]
+            }
+        }
+        array_impl_default!{($n - 1), $($ts)*}
+    };
+    {$n:expr,} => {
+        #[stable(since = "1.4.0", feature = "array_default")]
+        impl<T> Default for [T; $n] {
+            fn default() -> [T; $n] { [] }
+        }
+    };
+}
+
+array_impl_default!{32, T T T T T T T T T T T T T T T T T T T T T T T T T T T T T T T T}

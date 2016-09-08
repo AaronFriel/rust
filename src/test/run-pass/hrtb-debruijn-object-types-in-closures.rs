@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 trait Typer<'tcx> {
-    fn method(&self, data: &'tcx int) -> &'tcx int { data }
+    fn method(&self, data: &'tcx isize) -> &'tcx isize { data }
     fn dummy(&self) { }
 }
 
-fn g(_: |&Typer|) {
-}
+fn g<F>(_: F) where F: FnOnce(&Typer) {}
 
 fn h() {
     g(|typer| typer.dummy())

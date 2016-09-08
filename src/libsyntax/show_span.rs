@@ -13,27 +13,74 @@
 //! This module shows spans for all expressions in the crate
 //! to help with compiler debugging.
 
+use std::str::FromStr;
+
 use ast;
-use diagnostic;
+use errors;
 use visit;
 use visit::Visitor;
 
-struct ShowSpanVisitor<'a> {
-    span_diagnostic: &'a diagnostic::SpanHandler,
+enum Mode {
+    Expression,
+    Pattern,
+    Type,
 }
 
-impl<'a, 'v> Visitor<'v> for ShowSpanVisitor<'a> {
+impl FromStr for Mode {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Mode, ()> {
+        let mode = match s {
+            "expr" => Mode::Expression,
+            "pat" => Mode::Pattern,
+            "ty" => Mode::Type,
+            _ => return Err(())
+        };
+        Ok(mode)
+    }
+}
+
+struct ShowSpanVisitor<'a> {
+    span_diagnostic: &'a errors::Handler,
+    mode: Mode,
+}
+
+impl<'a> Visitor for ShowSpanVisitor<'a> {
     fn visit_expr(&mut self, e: &ast::Expr) {
-        self.span_diagnostic.span_note(e.span, "expression");
+        if let Mode::Expression = self.mode {
+            self.span_diagnostic.span_warn(e.span, "expression");
+        }
         visit::walk_expr(self, e);
     }
 
-    fn visit_mac(&mut self, macro: &ast::Mac) {
-        visit::walk_mac(self, macro);
+    fn visit_pat(&mut self, p: &ast::Pat) {
+        if let Mode::Pattern = self.mode {
+            self.span_diagnostic.span_warn(p.span, "pattern");
+        }
+        visit::walk_pat(self, p);
+    }
+
+    fn visit_ty(&mut self, t: &ast::Ty) {
+        if let Mode::Type = self.mode {
+            self.span_diagnostic.span_warn(t.span, "type");
+        }
+        visit::walk_ty(self, t);
+    }
+
+    fn visit_mac(&mut self, mac: &ast::Mac) {
+        visit::walk_mac(self, mac);
     }
 }
 
-pub fn run(span_diagnostic: &diagnostic::SpanHandler, krate: &ast::Crate) {
-    let mut v = ShowSpanVisitor { span_diagnostic: span_diagnostic };
+pub fn run(span_diagnostic: &errors::Handler,
+           mode: &str,
+           krate: &ast::Crate) {
+    let mode = match mode.parse().ok() {
+        Some(mode) => mode,
+        None => return
+    };
+    let mut v = ShowSpanVisitor {
+        span_diagnostic: span_diagnostic,
+        mode: mode,
+    };
     visit::walk_crate(&mut v, krate);
 }

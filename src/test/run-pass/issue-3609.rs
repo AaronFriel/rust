@@ -8,10 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(default_type_params)]
+#![allow(unknown_features)]
+#![feature(std_misc)]
 
-use std::task;
-use std::thunk::Invoke;
+use std::thread;
+use std::sync::mpsc::Sender;
 
 type RingBuffer = Vec<f64> ;
 type SamplesFn = Box<FnMut(&RingBuffer) + Send>;
@@ -22,18 +23,18 @@ enum Msg
 }
 
 fn foo(name: String, samples_chan: Sender<Msg>) {
-    task::spawn(move|| {
+    thread::spawn(move|| {
         let mut samples_chan = samples_chan;
 
-        // `box() (...)` syntax is needed to make pretty printer converge in one try:
-        let callback: SamplesFn = box() (move |buffer| {
-            for i in range(0u, buffer.len()) {
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        let callback: SamplesFn = Box::new(move |buffer| {
+            for i in 0..buffer.len() {
                 println!("{}: {}", i, buffer[i])
             }
         });
 
         samples_chan.send(Msg::GetSamples(name.clone(), callback));
-    });
+    }).join();
 }
 
 pub fn main() {}

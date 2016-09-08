@@ -11,11 +11,11 @@
 // Test that we don't panic on a RefCell borrow conflict in certain
 // code paths involving unboxed closures.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
 // aux-build:issue-18711.rs
-extern crate "issue-18711" as issue;
+extern crate issue_18711 as issue;
 
 fn main() {
-    (|:| issue::inner(()))();
+    (|| issue::inner(()))();
 }

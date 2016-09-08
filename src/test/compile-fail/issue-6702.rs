@@ -9,11 +9,11 @@
 // except according to those terms.
 
 struct Monster {
-    damage: int
+    damage: isize
 }
 
 
 fn main() {
-    let _m = Monster(); //~ ERROR `Monster` is a structure name, but
-    //~^ HELP Did you mean to write: `Monster { /* fields */ }`?
+    let _m = Monster(); //~ ERROR `Monster` is the name of a struct or
+    //~^ HELP did you mean to write: `Monster { /* fields */ }`?
 }

@@ -24,33 +24,60 @@ type PairF<U> = Pair<f32,U>;
 
 fn main() {
     let pt = PointF {
-        //~^ ERROR expected f32, found int
-        x: 1i,
-        y: 2i,
+        x: 1,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
+        y: 2,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
     };
 
     let pt2 = Point::<f32> {
-        //~^ ERROR expected f32, found int
-        x: 3i,
-        y: 4i,
+        x: 3,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
+        y: 4,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
     };
 
     let pair = PairF {
-        //~^ ERROR expected f32, found int
-        x: 5i,
-        y: 6i,
+        x: 5,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
+        y: 6,
     };
 
-    let pair2 = PairF::<int> {
-        //~^ ERROR expected f32, found int
-        x: 7i,
-        y: 8i,
+    let pair2 = PairF::<i32> {
+        x: 7,
+        //~^ ERROR mismatched types
+        //~| expected f32, found integral variable
+        y: 8,
     };
 
-    let pt3 = PointF::<int> {
-        //~^ ERROR wrong number of type arguments
-        x: 9i,
-        y: 10i,
+    let pt3 = PointF::<i32> { //~ ERROR wrong number of type arguments
+        x: 9,  //~ ERROR mismatched types
+        y: 10, //~ ERROR mismatched types
     };
+
+    match (Point { x: 1, y: 2 }) {
+        PointF::<u32> { .. } => {} //~ ERROR wrong number of type arguments
+        //~^ ERROR mismatched types
+    }
+
+    match (Point { x: 1, y: 2 }) {
+        PointF { .. } => {} //~ ERROR mismatched types
+    }
+
+    match (Point { x: 1.0, y: 2.0 }) {
+        PointF { .. } => {} // ok
+    }
+
+    match (Pair { x: 1, y: 2 }) {
+        PairF::<u32> { .. } => {} //~ ERROR mismatched types
+    }
+
+    match (Pair { x: 1.0, y: 2 }) {
+        PairF::<u32> { .. } => {} // ok
+    }
 }
-

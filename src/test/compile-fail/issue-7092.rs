@@ -14,8 +14,11 @@ enum Whatever {
 fn foo(x: Whatever) {
     match x {
         Some(field) =>
-//~^ ERROR: mismatched types: expected `Whatever`, found `core::option::Option<_>`
-            field.access(), //~ ERROR the type of this value must be known in this context
+//~^ ERROR mismatched types
+//~| expected type `Whatever`
+//~| found type `std::option::Option<_>`
+//~| expected enum `Whatever`, found enum `std::option::Option`
+            field.access(),
     }
 }
 

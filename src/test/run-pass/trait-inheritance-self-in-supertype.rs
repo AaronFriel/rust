@@ -10,8 +10,6 @@
 
 // Test for issue #4183: use of Self in supertraits.
 
-use std::num::Float as StdFloat;
-
 pub static FUZZY_EPSILON: f64 = 0.1;
 
 pub trait FuzzyEq<Eps> {
@@ -19,7 +17,7 @@ pub trait FuzzyEq<Eps> {
     fn fuzzy_eq_eps(&self, other: &Self, epsilon: &Eps) -> bool;
 }
 
-trait Float: FuzzyEq<Self> {
+trait Float: Sized+FuzzyEq<Self> {
     fn two_pi() -> Self;
 }
 

@@ -8,20 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Show)]
+#[derive(Debug)]
 enum foo {
-  a(uint),
+  a(usize),
   b(String),
   c,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 enum bar {
   d, e, f
 }
 
 pub fn main() {
-    assert_eq!("a(22)".to_string(), format!("{}", foo::a(22u)));
-    assert_eq!("c".to_string(), format!("{}", foo::c));
-    assert_eq!("d".to_string(), format!("{}", bar::d));
+    assert_eq!("a(22)".to_string(), format!("{:?}", foo::a(22)));
+    assert_eq!("c".to_string(), format!("{:?}", foo::c));
+    assert_eq!("d".to_string(), format!("{:?}", bar::d));
 }

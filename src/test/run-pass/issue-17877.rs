@@ -8,14 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn main() {
-    assert_eq!(match [0u8, ..1024] {
-        _ => 42u,
-    }, 42u);
 
-    assert_eq!(match [0u8, ..1024] {
-        [1, _..] => 0u,
-        [0, _..] => 1u,
-        _ => 2u
-    }, 1u);
+#![feature(slice_patterns)]
+
+fn main() {
+    assert_eq!(match [0u8; 1024] {
+        _ => 42_usize,
+    }, 42_usize);
+
+    assert_eq!(match [0u8; 1024] {
+        [1, _..] => 0_usize,
+        [0, _..] => 1_usize,
+        _ => 2_usize
+    }, 1_usize);
 }

@@ -9,7 +9,8 @@
 // except according to those terms.
 
 
-#[deriving(Clone)]
+
+#[derive(Clone)]
 struct myvec<X>(Vec<X> );
 
 fn myvec_deref<X:Clone>(mv: myvec<X>) -> Vec<X> {
@@ -23,7 +24,7 @@ fn myvec_elt<X>(mv: myvec<X>) -> X {
 }
 
 pub fn main() {
-    let mv = myvec(vec!(1i, 2, 3));
+    let mv = myvec(vec!(1, 2, 3));
     let mv_clone = mv.clone();
     let mv_clone = myvec_deref(mv_clone);
     assert_eq!(mv_clone[1], 2);

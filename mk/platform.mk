@@ -1,4 +1,4 @@
-# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 # file at the top-level directory of this distribution and at
 # http://rust-lang.org/COPYRIGHT.
 #
@@ -14,7 +14,7 @@
 # would create a variable HOST_i686-darwin-macos with the value
 # i386.
 define DEF_HOST_VAR
-  HOST_$(1) = $(subst i686,i386,$(word 1,$(subst -, ,$(1))))
+  HOST_$(1) = $(patsubst i%86,i386,$(word 1,$(subst -, ,$(1))))
 endef
 $(foreach t,$(CFG_TARGET),$(eval $(call DEF_HOST_VAR,$(t))))
 $(foreach t,$(CFG_TARGET),$(info cfg: host for $(t) is $(HOST_$(t))))
@@ -46,8 +46,9 @@ endif
 # see https://blog.mozilla.org/jseward/2012/06/05/valgrind-now-supports-jemalloc-builds-directly/
 ifdef CFG_VALGRIND
   CFG_VALGRIND += --error-exitcode=100 \
-                  --soname-synonyms=somalloc=NONE \
+                  --fair-sched=try \
                   --quiet \
+                  --soname-synonyms=somalloc=NONE \
                   --suppressions=$(CFG_SRC_DIR)src/etc/x86.supp \
                   $(OS_SUPP)
   ifdef CFG_ENABLE_HELGRIND
@@ -63,35 +64,18 @@ define DEF_GOOD_VALGRIND
   ifeq ($(OSTYPE_$(1)),unknown-linux-gnu)
     GOOD_VALGRIND_$(1) = 1
   endif
-  ifneq (,$(filter $(OSTYPE_$(1)),darwin freebsd))
-    ifeq (HOST_$(1),x86_64)
+  ifneq (,$(filter $(OSTYPE_$(1)),apple-darwin freebsd))
+    ifeq ($(HOST_$(1)),x86_64)
       GOOD_VALGRIND_$(1) = 1
     endif
   endif
+  ifdef GOOD_VALGRIND_$(t)
+    $$(info cfg: have good valgrind for $(t))
+  else
+    $$(info cfg: no good valgrind for $(t))
+  endif
 endef
 $(foreach t,$(CFG_TARGET),$(eval $(call DEF_GOOD_VALGRIND,$(t))))
-$(foreach t,$(CFG_TARGET),$(info cfg: good valgrind for $(t) is $(GOOD_VALGRIND_$(t))))
-
-ifneq ($(findstring linux,$(CFG_OSTYPE)),)
-  ifdef CFG_PERF
-    ifneq ($(CFG_PERF_WITH_LOGFD),)
-        CFG_PERF_TOOL := $(CFG_PERF) stat -r 3 --log-fd 2
-    else
-        CFG_PERF_TOOL := $(CFG_PERF) stat -r 3
-    endif
-  else
-    ifdef CFG_VALGRIND
-      CFG_PERF_TOOL := \
-        $(CFG_VALGRIND) --tool=cachegrind --cache-sim=yes --branch-sim=yes
-    else
-      CFG_PERF_TOOL := /usr/bin/time --verbose
-    endif
-  endif
-endif
-
-# These flags will cause the compiler to produce a .d file
-# next to the .o file that lists header deps.
-CFG_DEPEND_FLAGS = -MMD -MP -MT $(1) -MF $(1:%.o=%.d)
 
 AR := ar
 
@@ -115,6 +99,37 @@ CFG_RLIB_GLOB=lib$(1)-*.rlib
 
 include $(wildcard $(CFG_SRC_DIR)mk/cfg/*.mk)
 
+define ADD_INSTALLED_OBJECTS
+  INSTALLED_OBJECTS_$(1) += $$(CFG_INSTALLED_OBJECTS_$(1))
+  REQUIRED_OBJECTS_$(1) += $$(CFG_THIRD_PARTY_OBJECTS_$(1))
+  INSTALLED_OBJECTS_$(1) += $$(call CFG_STATIC_LIB_NAME_$(1),compiler-rt)
+  REQUIRED_OBJECTS_$(1) += $$(call CFG_STATIC_LIB_NAME_$(1),compiler-rt)
+endef
+
+$(foreach target,$(CFG_TARGET), \
+  $(eval $(call ADD_INSTALLED_OBJECTS,$(target))))
+
+define DEFINE_LINKER
+  ifndef LINK_$(1)
+    LINK_$(1) := $$(CC_$(1))
+  endif
+endef
+
+$(foreach target,$(CFG_TARGET), \
+  $(eval $(call DEFINE_LINKER,$(target))))
+
+define ADD_JEMALLOC_DEP
+  ifndef CFG_DISABLE_JEMALLOC_$(1)
+    ifndef CFG_DISABLE_JEMALLOC
+      RUST_DEPS_std_T_$(1) += alloc_jemalloc
+      TARGET_CRATES_$(1) += alloc_jemalloc
+    endif
+  endif
+endef
+
+$(foreach target,$(CFG_TARGET), \
+  $(eval $(call ADD_JEMALLOC_DEP,$(target))))
+
 # The -Qunused-arguments sidesteps spurious warnings from clang
 define FILTER_FLAGS
   ifeq ($$(CFG_USING_CLANG),1)
@@ -128,6 +143,21 @@ endef
 $(foreach target,$(CFG_TARGET), \
   $(eval $(call FILTER_FLAGS,$(target))))
 
+# Configure various macros to pass gcc or cl.exe style arguments
+define CC_MACROS
+  CFG_CC_INCLUDE_$(1)=-I $$(1)
+  ifeq ($$(findstring msvc,$(1)),msvc)
+    CFG_CC_OUTPUT_$(1)=-Fo:$$(1)
+    CFG_CREATE_ARCHIVE_$(1)='$$(AR_$(1))' -OUT:$$(1)
+  else
+    CFG_CC_OUTPUT_$(1)=-o $$(1)
+    CFG_CREATE_ARCHIVE_$(1)=$$(AR_$(1)) crus $$(1)
+  endif
+endef
+
+$(foreach target,$(CFG_TARGET), \
+  $(eval $(call CC_MACROS,$(target))))
+
 
 ifeq ($(CFG_CCACHE_CPP2),1)
   CCACHE_CPP2=1
@@ -139,60 +169,80 @@ ifdef CFG_CCACHE_BASEDIR
   export CCACHE_BASEDIR
 endif
 
-FIND_COMPILER = $(word 1,$(1:ccache=))
+FIND_COMPILER = $(strip $(1:ccache=))
 
 define CFG_MAKE_TOOLCHAIN
   # Prepend the tools with their prefix if cross compiling
   ifneq ($(CFG_BUILD),$(1))
-	CC_$(1)=$(CROSS_PREFIX_$(1))$(CC_$(1))
-	CXX_$(1)=$(CROSS_PREFIX_$(1))$(CXX_$(1))
-	CPP_$(1)=$(CROSS_PREFIX_$(1))$(CPP_$(1))
-	AR_$(1)=$(CROSS_PREFIX_$(1))$(AR_$(1))
-	RUSTC_CROSS_FLAGS_$(1)=-C linker=$$(call FIND_COMPILER,$$(CC_$(1))) \
-	    -C ar=$$(call FIND_COMPILER,$$(AR_$(1))) $(RUSTC_CROSS_FLAGS_$(1))
+    ifneq ($$(findstring msvc,$(1)),msvc)
+       CC_$(1)=$(CROSS_PREFIX_$(1))$(CC_$(1))
+       CXX_$(1)=$(CROSS_PREFIX_$(1))$(CXX_$(1))
+       CPP_$(1)=$(CROSS_PREFIX_$(1))$(CPP_$(1))
+       AR_$(1)=$(CROSS_PREFIX_$(1))$(AR_$(1))
+       LINK_$(1)=$(CROSS_PREFIX_$(1))$(LINK_$(1))
+       RUSTC_CROSS_FLAGS_$(1)=-C linker=$$(call FIND_COMPILER,$$(LINK_$(1))) \
+           -C ar=$$(call FIND_COMPILER,$$(AR_$(1))) $(RUSTC_CROSS_FLAGS_$(1))
 
-	RUSTC_FLAGS_$(1)=$$(RUSTC_CROSS_FLAGS_$(1)) $(RUSTC_FLAGS_$(1))
+       RUSTC_FLAGS_$(1)=$$(RUSTC_CROSS_FLAGS_$(1)) $(RUSTC_FLAGS_$(1))
+    endif
   endif
 
-  CFG_COMPILE_C_$(1) = $$(CC_$(1)) \
+  CFG_COMPILE_C_$(1) = '$$(call FIND_COMPILER,$$(CC_$(1)))' \
+        $$(CFLAGS) \
         $$(CFG_GCCISH_CFLAGS) \
         $$(CFG_GCCISH_CFLAGS_$(1)) \
-        $$(CFG_DEPEND_FLAGS) \
-        -c -o $$(1) $$(2)
+        -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
   CFG_LINK_C_$(1) = $$(CC_$(1)) \
+        $$(LDFLAGS) \
         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
         $$(call CFG_INSTALL_NAME_$(1),$$(4))
-  CFG_COMPILE_CXX_$(1) = $$(CXX_$(1)) \
+  CFG_COMPILE_CXX_$(1) = '$$(call FIND_COMPILER,$$(CXX_$(1)))' \
+        $$(CXXFLAGS) \
         $$(CFG_GCCISH_CFLAGS) \
         $$(CFG_GCCISH_CXXFLAGS) \
         $$(CFG_GCCISH_CFLAGS_$(1)) \
         $$(CFG_GCCISH_CXXFLAGS_$(1)) \
-        $$(CFG_DEPEND_FLAGS) \
-        -c -o $$(1) $$(2)
+        -c $$(call CFG_CC_OUTPUT_$(1),$$(1)) $$(2)
   CFG_LINK_CXX_$(1) = $$(CXX_$(1)) \
+        $$(LDFLAGS) \
         $$(CFG_GCCISH_LINK_FLAGS) -o $$(1) \
         $$(CFG_GCCISH_LINK_FLAGS_$(1)) \
         $$(CFG_GCCISH_DEF_FLAG_$(1))$$(3) $$(2) \
         $$(call CFG_INSTALL_NAME_$(1),$$(4))
 
-  ifeq ($$(findstring $(HOST_$(1)),arm mips mipsel),)
+  ifeq ($$(findstring $(HOST_$(1)),arm aarch64 mips mipsel powerpc),)
+
+  # On Bitrig, we need the relocation model to be PIC for everything
+  ifeq (,$(filter $(OSTYPE_$(1)),bitrig))
+    LLVM_MC_RELOCATION_MODEL="pic"
+  else
+    LLVM_MC_RELOCATION_MODEL="default"
+  endif
+
+  # LLVM changed this flag in 3.9
+  ifdef CFG_LLVM_MC_HAS_RELOCATION_MODEL
+    LLVM_MC_RELOC_FLAG := -relocation-model=$$(LLVM_MC_RELOCATION_MODEL)
+  else
+    LLVM_MC_RELOC_FLAG := -position-independent
+  endif
 
   # We're using llvm-mc as our assembler because it supports
   # .cfi pseudo-ops on mac
-  CFG_ASSEMBLE_$(1)=$$(CPP_$(1)) -E $$(CFG_DEPEND_FLAGS) $$(2) | \
+  CFG_ASSEMBLE_$(1)=$$(CPP_$(1)) -E $$(2) | \
                     $$(LLVM_MC_$$(CFG_BUILD)) \
                     -assemble \
+                    $$(LLVM_MC_RELOC_FLAG) \
                     -filetype=obj \
                     -triple=$(1) \
                     -o=$$(1)
   else
 
-  # For the ARM and MIPS crosses, use the toolchain assembler
+  # For the ARM, AARCH64, MIPS and POWER crosses, use the toolchain assembler
   # FIXME: We should be able to use the LLVM assembler
   CFG_ASSEMBLE_$(1)=$$(CC_$(1)) $$(CFG_GCCISH_CFLAGS_$(1)) \
-		    $$(CFG_DEPEND_FLAGS) $$(2) -c -o $$(1)
+                   $$(2) -c -o $$(1)
 
   endif
 

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// pretty-expanded FIXME #23616
+
 enum Homura {
     Madoka {
         name: String,
@@ -17,7 +19,7 @@ enum Homura {
 
 fn main() {
     let homura = Homura::Madoka {
-        name: "Akemi".into_string(),
+        name: "Akemi".to_string(),
         age: 14,
     };
 

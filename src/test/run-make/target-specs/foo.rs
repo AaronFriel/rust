@@ -8,8 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(lang_items)]
-#![no_std]
+#![feature(lang_items, no_core)]
+#![no_core]
 
 #[lang="copy"]
 trait Copy { }
@@ -18,10 +18,10 @@ trait Copy { }
 trait Sized { }
 
 #[lang="start"]
-fn start(_main: *const u8, _argc: int, _argv: *const *const u8) -> int { 0 }
+fn start(_main: *const u8, _argc: isize, _argv: *const *const u8) -> isize { 0 }
 
 extern {
-    fn _foo() -> [u8, ..16];
+    fn _foo() -> [u8; 16];
 }
 
 fn _main() {

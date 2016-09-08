@@ -10,328 +10,236 @@
 
 //! Code for type-checking closure expressions.
 
-use super::check_fn;
-use super::{Expectation, ExpectCastableToType, ExpectHasType, NoExpectation};
-use super::FnCtxt;
+use super::{check_fn, Expectation, FnCtxt};
 
-use astconv;
-use middle::infer;
-use middle::subst;
-use middle::ty::{mod, Ty};
-use rscope::RegionScope;
-use syntax::abi;
-use syntax::ast;
-use syntax::ast_util;
-use util::ppaux::Repr;
+use astconv::AstConv;
+use rustc::ty::{self, ToPolyTraitRef, Ty};
+use std::cmp;
+use syntax::abi::Abi;
+use rustc::hir;
 
-pub fn check_expr_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
-                                   expr: &ast::Expr,
-                                   opt_kind: Option<ast::UnboxedClosureKind>,
-                                   decl: &ast::FnDecl,
-                                   body: &ast::Block,
-                                   expected: Expectation<'tcx>) {
-    debug!("check_expr_closure(expr={},expected={})",
-           expr.repr(fcx.tcx()),
-           expected.repr(fcx.tcx()));
+impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
+    pub fn check_expr_closure(&self,
+                              expr: &hir::Expr,
+                              _capture: hir::CaptureClause,
+                              decl: &'gcx hir::FnDecl,
+                              body: &'gcx hir::Block,
+                              expected: Expectation<'tcx>) -> Ty<'tcx> {
+        debug!("check_expr_closure(expr={:?},expected={:?})",
+               expr,
+               expected);
 
-    match opt_kind {
-        None => {
-            // If users didn't specify what sort of closure they want,
-            // examine the expected type. For now, if we see explicit
-            // evidence than an unboxed closure is desired, we'll use
-            // that, otherwise we'll fall back to boxed closures.
-            match deduce_unboxed_closure_expectations_from_expectation(fcx, expected) {
-                None => { // doesn't look like an unboxed closure
-                    let region = astconv::opt_ast_region_to_region(fcx,
-                                                                   fcx.infcx(),
-                                                                   expr.span,
-                                                                   &None);
-                    check_boxed_closure(fcx,
-                                        expr,
-                                        ty::RegionTraitStore(region, ast::MutMutable),
-                                        decl,
-                                        body,
-                                        expected);
-                }
-                Some((sig, kind)) => {
-                    check_unboxed_closure(fcx, expr, kind, decl, body, Some(sig));
-                }
+        // It's always helpful for inference if we know the kind of
+        // closure sooner rather than later, so first examine the expected
+        // type, and see if can glean a closure kind from there.
+        let (expected_sig,expected_kind) = match expected.to_option(self) {
+            Some(ty) => self.deduce_expectations_from_expected_type(ty),
+            None => (None, None)
+        };
+        self.check_closure(expr, expected_kind, decl, body, expected_sig)
+    }
+
+    fn check_closure(&self,
+                     expr: &hir::Expr,
+                     opt_kind: Option<ty::ClosureKind>,
+                     decl: &'gcx hir::FnDecl,
+                     body: &'gcx hir::Block,
+                     expected_sig: Option<ty::FnSig<'tcx>>) -> Ty<'tcx> {
+        let expr_def_id = self.tcx.map.local_def_id(expr.id);
+
+        debug!("check_closure opt_kind={:?} expected_sig={:?}",
+               opt_kind,
+               expected_sig);
+
+        let mut fn_ty = AstConv::ty_of_closure(self,
+                                               hir::Unsafety::Normal,
+                                               decl,
+                                               Abi::RustCall,
+                                               expected_sig);
+
+        // Create type variables (for now) to represent the transformed
+        // types of upvars. These will be unified during the upvar
+        // inference phase (`upvar.rs`).
+        let num_upvars = self.tcx.with_freevars(expr.id, |fv| fv.len());
+        let upvar_tys = self.next_ty_vars(num_upvars);
+
+        debug!("check_closure: expr.id={:?} upvar_tys={:?}",
+               expr.id, upvar_tys);
+
+        let closure_type = self.tcx.mk_closure(expr_def_id,
+            self.parameter_environment.free_substs,
+            upvar_tys);
+
+        let fn_sig = self.tcx.liberate_late_bound_regions(
+            self.tcx.region_maps.call_site_extent(expr.id, body.id), &fn_ty.sig);
+        let fn_sig =
+            (**self).normalize_associated_types_in(body.span, body.id, &fn_sig);
+
+        check_fn(self, hir::Unsafety::Normal, expr.id, &fn_sig, decl, expr.id, &body);
+
+        // Tuple up the arguments and insert the resulting function type into
+        // the `closures` table.
+        fn_ty.sig.0.inputs = vec![self.tcx.mk_tup(fn_ty.sig.0.inputs)];
+
+        debug!("closure for {:?} --> sig={:?} opt_kind={:?}",
+               expr_def_id,
+               fn_ty.sig,
+               opt_kind);
+
+        self.tables.borrow_mut().closure_tys.insert(expr_def_id, fn_ty);
+        match opt_kind {
+            Some(kind) => { self.tables.borrow_mut().closure_kinds.insert(expr_def_id, kind); }
+            None => { }
+        }
+
+        closure_type
+    }
+
+    fn deduce_expectations_from_expected_type(&self, expected_ty: Ty<'tcx>)
+        -> (Option<ty::FnSig<'tcx>>,Option<ty::ClosureKind>)
+    {
+        debug!("deduce_expectations_from_expected_type(expected_ty={:?})",
+               expected_ty);
+
+        match expected_ty.sty {
+            ty::TyTrait(ref object_type) => {
+                let sig = object_type.projection_bounds.iter().filter_map(|pb| {
+                    let pb = pb.with_self_ty(self.tcx, self.tcx.types.err);
+                    self.deduce_sig_from_projection(&pb)
+                }).next();
+                let kind = self.tcx.lang_items.fn_trait_kind(object_type.principal.def_id());
+                (sig, kind)
             }
-        }
-
-        Some(kind) => {
-            let kind = match kind {
-                ast::FnUnboxedClosureKind => ty::FnUnboxedClosureKind,
-                ast::FnMutUnboxedClosureKind => ty::FnMutUnboxedClosureKind,
-                ast::FnOnceUnboxedClosureKind => ty::FnOnceUnboxedClosureKind,
-            };
-
-            let expected_sig =
-                deduce_unboxed_closure_expectations_from_expectation(fcx, expected)
-                .map(|t| t.0);
-
-            check_unboxed_closure(fcx, expr, kind, decl, body, expected_sig);
-        }
-    }
-}
-
-fn check_unboxed_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
-                                  expr: &ast::Expr,
-                                  kind: ty::UnboxedClosureKind,
-                                  decl: &ast::FnDecl,
-                                  body: &ast::Block,
-                                  expected_sig: Option<ty::FnSig<'tcx>>) {
-    let expr_def_id = ast_util::local_def(expr.id);
-
-    debug!("check_unboxed_closure kind={} expected_sig={}",
-           kind,
-           expected_sig.repr(fcx.tcx()));
-
-    let mut fn_ty = astconv::ty_of_closure(
-        fcx,
-        ast::Unsafety::Normal,
-        ast::Many,
-
-        // The `RegionTraitStore` and region_existential_bounds
-        // are lies, but we ignore them so it doesn't matter.
-        //
-        // FIXME(pcwalton): Refactor this API.
-        ty::region_existential_bound(ty::ReStatic),
-        ty::RegionTraitStore(ty::ReStatic, ast::MutImmutable),
-
-        decl,
-        abi::RustCall,
-        expected_sig);
-
-    let region = match fcx.infcx().anon_regions(expr.span, 1) {
-        Err(_) => {
-            fcx.ccx.tcx.sess.span_bug(expr.span,
-                                      "can't make anon regions here?!")
-        }
-        Ok(regions) => regions[0],
-    };
-
-    let closure_type = ty::mk_unboxed_closure(fcx.ccx.tcx,
-                                              expr_def_id,
-                                              region,
-                                              fcx.inh.param_env.free_substs.clone());
-
-    fcx.write_ty(expr.id, closure_type);
-
-    check_fn(fcx.ccx,
-             ast::Unsafety::Normal,
-             expr.id,
-             &fn_ty.sig,
-             decl,
-             expr.id,
-             &*body,
-             fcx.inh);
-
-    // Tuple up the arguments and insert the resulting function type into
-    // the `unboxed_closures` table.
-    fn_ty.sig.inputs = vec![ty::mk_tup(fcx.tcx(), fn_ty.sig.inputs)];
-
-    debug!("unboxed_closure for {} --> sig={} kind={}",
-           expr_def_id.repr(fcx.tcx()),
-           fn_ty.sig.repr(fcx.tcx()),
-           kind);
-
-    let unboxed_closure = ty::UnboxedClosure {
-        closure_type: fn_ty,
-        kind: kind,
-    };
-
-    fcx.inh
-        .unboxed_closures
-        .borrow_mut()
-        .insert(expr_def_id, unboxed_closure);
-}
-
-fn deduce_unboxed_closure_expectations_from_expectation<'a,'tcx>(
-    fcx: &FnCtxt<'a,'tcx>,
-    expected: Expectation<'tcx>)
-    -> Option<(ty::FnSig<'tcx>,ty::UnboxedClosureKind)>
-{
-    match expected.resolve(fcx) {
-        NoExpectation => None,
-        ExpectCastableToType(t) | ExpectHasType(t) => {
-            deduce_unboxed_closure_expectations_from_expected_type(fcx, t)
-        }
-    }
-}
-
-fn deduce_unboxed_closure_expectations_from_expected_type<'a,'tcx>(
-    fcx: &FnCtxt<'a,'tcx>,
-    expected_ty: Ty<'tcx>)
-    -> Option<(ty::FnSig<'tcx>,ty::UnboxedClosureKind)>
-{
-    match expected_ty.sty {
-        ty::ty_trait(ref object_type) => {
-            deduce_unboxed_closure_expectations_from_trait_ref(fcx, &object_type.principal)
-        }
-        ty::ty_infer(ty::TyVar(vid)) => {
-            deduce_unboxed_closure_expectations_from_obligations(fcx, vid)
-        }
-        _ => {
-            None
-        }
-    }
-}
-
-fn deduce_unboxed_closure_expectations_from_trait_ref<'a,'tcx>(
-    fcx: &FnCtxt<'a,'tcx>,
-    trait_ref: &ty::TraitRef<'tcx>)
-    -> Option<(ty::FnSig<'tcx>, ty::UnboxedClosureKind)>
-{
-    let tcx = fcx.tcx();
-
-    debug!("deduce_unboxed_closure_expectations_from_object_type({})",
-           trait_ref.repr(tcx));
-
-    let kind = match tcx.lang_items.fn_trait_kind(trait_ref.def_id) {
-        Some(k) => k,
-        None => { return None; }
-    };
-
-    debug!("found object type {}", kind);
-
-    let arg_param_ty = *trait_ref.substs.types.get(subst::TypeSpace, 0);
-    let arg_param_ty = fcx.infcx().resolve_type_vars_if_possible(arg_param_ty);
-    debug!("arg_param_ty {}", arg_param_ty.repr(tcx));
-
-    let input_tys = match arg_param_ty.sty {
-        ty::ty_tup(ref tys) => { (*tys).clone() }
-        _ => { return None; }
-    };
-    debug!("input_tys {}", input_tys.repr(tcx));
-
-    let ret_param_ty = *trait_ref.substs.types.get(subst::TypeSpace, 1);
-    let ret_param_ty = fcx.infcx().resolve_type_vars_if_possible(ret_param_ty);
-    debug!("ret_param_ty {}", ret_param_ty.repr(tcx));
-
-    let fn_sig = ty::FnSig {
-        inputs: input_tys,
-        output: ty::FnConverging(ret_param_ty),
-        variadic: false
-    };
-    debug!("fn_sig {}", fn_sig.repr(tcx));
-
-    return Some((fn_sig, kind));
-}
-
-fn deduce_unboxed_closure_expectations_from_obligations<'a,'tcx>(
-    fcx: &FnCtxt<'a,'tcx>,
-    expected_vid: ty::TyVid)
-    -> Option<(ty::FnSig<'tcx>, ty::UnboxedClosureKind)>
-{
-    // Here `expected_ty` is known to be a type inference variable.
-    for obligation in fcx.inh.fulfillment_cx.borrow().pending_obligations().iter() {
-        match obligation.trait_ref {
-            ty::Predicate::Trait(ref trait_ref) => {
-                let self_ty = fcx.infcx().shallow_resolve(trait_ref.self_ty());
-                match self_ty.sty {
-                    ty::ty_infer(ty::TyVar(v)) if expected_vid == v => { }
-                    _ => { continue; }
-                }
-
-                match deduce_unboxed_closure_expectations_from_trait_ref(fcx, &**trait_ref) {
-                    Some(e) => { return Some(e); }
-                    None => { }
-                }
-            }
-            ty::Predicate::Equate(..) |
-            ty::Predicate::RegionOutlives(..) |
-            ty::Predicate::TypeOutlives(..) => {
-            }
-        }
-    }
-
-    None
-}
-
-
-fn check_boxed_closure<'a,'tcx>(fcx: &FnCtxt<'a,'tcx>,
-                                expr: &ast::Expr,
-                                store: ty::TraitStore,
-                                decl: &ast::FnDecl,
-                                body: &ast::Block,
-                                expected: Expectation<'tcx>) {
-    let tcx = fcx.ccx.tcx;
-
-    // Find the expected input/output types (if any). Substitute
-    // fresh bound regions for any bound regions we find in the
-    // expected types so as to avoid capture.
-    let expected_sty = expected.map_to_option(fcx, |x| Some((*x).clone()));
-    let (expected_sig,
-         expected_onceness,
-         expected_bounds) = {
-        match expected_sty {
-            Some(ty::ty_closure(ref cenv)) => {
-                let (sig, _) =
-                    ty::replace_late_bound_regions(
-                        tcx,
-                        &cenv.sig,
-                        |_, debruijn| fcx.inh.infcx.fresh_bound_region(debruijn));
-                let onceness = match (&store, &cenv.store) {
-                    // As the closure type and onceness go, only three
-                    // combinations are legit:
-                    //      once closure
-                    //      many closure
-                    //      once proc
-                    // If the actual and expected closure type disagree with
-                    // each other, set expected onceness to be always Once or
-                    // Many according to the actual type. Otherwise, it will
-                    // yield either an illegal "many proc" or a less known
-                    // "once closure" in the error message.
-                    (&ty::UniqTraitStore, &ty::UniqTraitStore) |
-                    (&ty::RegionTraitStore(..), &ty::RegionTraitStore(..)) =>
-                        cenv.onceness,
-                    (&ty::UniqTraitStore, _) => ast::Once,
-                    (&ty::RegionTraitStore(..), _) => ast::Many,
-                };
-                (Some(sig), onceness, cenv.bounds)
+            ty::TyInfer(ty::TyVar(vid)) => {
+                self.deduce_expectations_from_obligations(vid)
             }
             _ => {
-                // Not an error! Means we're inferring the closure type
-                let region = fcx.infcx().next_region_var(
-                    infer::AddrOfRegion(expr.span));
-                let bounds = ty::region_existential_bound(region);
-                let onceness = ast::Many;
-                (None, onceness, bounds)
+                (None, None)
             }
         }
-    };
+    }
 
-    // construct the function type
-    let fn_ty = astconv::ty_of_closure(fcx,
-                                       ast::Unsafety::Normal,
-                                       expected_onceness,
-                                       expected_bounds,
-                                       store,
-                                       decl,
-                                       abi::Rust,
-                                       expected_sig);
-    let fty_sig = fn_ty.sig.clone();
-    let fty = ty::mk_closure(tcx, fn_ty);
-    debug!("check_expr_fn fty={}", fcx.infcx().ty_to_string(fty));
+    fn deduce_expectations_from_obligations(&self, expected_vid: ty::TyVid)
+        -> (Option<ty::FnSig<'tcx>>, Option<ty::ClosureKind>)
+    {
+        let fulfillment_cx = self.fulfillment_cx.borrow();
+        // Here `expected_ty` is known to be a type inference variable.
 
-    fcx.write_ty(expr.id, fty);
+        let expected_sig =
+            fulfillment_cx
+            .pending_obligations()
+            .iter()
+            .map(|obligation| &obligation.obligation)
+            .filter_map(|obligation| {
+                debug!("deduce_expectations_from_obligations: obligation.predicate={:?}",
+                       obligation.predicate);
 
-    // If the closure is a stack closure and hasn't had some non-standard
-    // style inferred for it, then check it under its parent's style.
-    // Otherwise, use its own
-    let (inherited_style, inherited_style_id) = match store {
-        ty::RegionTraitStore(..) => (fcx.ps.borrow().unsafety,
-                                     fcx.ps.borrow().def),
-        ty::UniqTraitStore => (ast::Unsafety::Normal, expr.id)
-    };
+                match obligation.predicate {
+                    // Given a Projection predicate, we can potentially infer
+                    // the complete signature.
+                    ty::Predicate::Projection(ref proj_predicate) => {
+                        let trait_ref = proj_predicate.to_poly_trait_ref();
+                        self.self_type_matches_expected_vid(trait_ref, expected_vid)
+                            .and_then(|_| self.deduce_sig_from_projection(proj_predicate))
+                    }
+                    _ => {
+                        None
+                    }
+                }
+            })
+            .next();
 
-    check_fn(fcx.ccx,
-             inherited_style,
-             inherited_style_id,
-             &fty_sig,
-             &*decl,
-             expr.id,
-             &*body,
-             fcx.inh);
+        // Even if we can't infer the full signature, we may be able to
+        // infer the kind. This can occur if there is a trait-reference
+        // like `F : Fn<A>`. Note that due to subtyping we could encounter
+        // many viable options, so pick the most restrictive.
+        let expected_kind =
+            fulfillment_cx
+            .pending_obligations()
+            .iter()
+            .map(|obligation| &obligation.obligation)
+            .filter_map(|obligation| {
+                let opt_trait_ref = match obligation.predicate {
+                    ty::Predicate::Projection(ref data) => Some(data.to_poly_trait_ref()),
+                    ty::Predicate::Trait(ref data) => Some(data.to_poly_trait_ref()),
+                    ty::Predicate::Equate(..) => None,
+                    ty::Predicate::RegionOutlives(..) => None,
+                    ty::Predicate::TypeOutlives(..) => None,
+                    ty::Predicate::WellFormed(..) => None,
+                    ty::Predicate::ObjectSafe(..) => None,
+
+                    // NB: This predicate is created by breaking down a
+                    // `ClosureType: FnFoo()` predicate, where
+                    // `ClosureType` represents some `TyClosure`. It can't
+                    // possibly be referring to the current closure,
+                    // because we haven't produced the `TyClosure` for
+                    // this closure yet; this is exactly why the other
+                    // code is looking for a self type of a unresolved
+                    // inference variable.
+                    ty::Predicate::ClosureKind(..) => None,
+                };
+                opt_trait_ref
+                    .and_then(|tr| self.self_type_matches_expected_vid(tr, expected_vid))
+                    .and_then(|tr| self.tcx.lang_items.fn_trait_kind(tr.def_id()))
+            })
+            .fold(None, |best, cur| Some(best.map_or(cur, |best| cmp::min(best, cur))));
+
+        (expected_sig, expected_kind)
+    }
+
+    /// Given a projection like "<F as Fn(X)>::Result == Y", we can deduce
+    /// everything we need to know about a closure.
+    fn deduce_sig_from_projection(&self,
+        projection: &ty::PolyProjectionPredicate<'tcx>)
+        -> Option<ty::FnSig<'tcx>>
+    {
+        let tcx = self.tcx;
+
+        debug!("deduce_sig_from_projection({:?})",
+               projection);
+
+        let trait_ref = projection.to_poly_trait_ref();
+
+        if tcx.lang_items.fn_trait_kind(trait_ref.def_id()).is_none() {
+            return None;
+        }
+
+        let arg_param_ty = trait_ref.substs().type_at(1);
+        let arg_param_ty = self.resolve_type_vars_if_possible(&arg_param_ty);
+        debug!("deduce_sig_from_projection: arg_param_ty {:?}", arg_param_ty);
+
+        let input_tys = match arg_param_ty.sty {
+            ty::TyTuple(tys) => tys.to_vec(),
+            _ => { return None; }
+        };
+        debug!("deduce_sig_from_projection: input_tys {:?}", input_tys);
+
+        let ret_param_ty = projection.0.ty;
+        let ret_param_ty = self.resolve_type_vars_if_possible(&ret_param_ty);
+        debug!("deduce_sig_from_projection: ret_param_ty {:?}", ret_param_ty);
+
+        let fn_sig = ty::FnSig {
+            inputs: input_tys,
+            output: ret_param_ty,
+            variadic: false
+        };
+        debug!("deduce_sig_from_projection: fn_sig {:?}", fn_sig);
+
+        Some(fn_sig)
+    }
+
+    fn self_type_matches_expected_vid(&self,
+        trait_ref: ty::PolyTraitRef<'tcx>,
+        expected_vid: ty::TyVid)
+        -> Option<ty::PolyTraitRef<'tcx>>
+    {
+        let self_ty = self.shallow_resolve(trait_ref.self_ty());
+        debug!("self_type_matches_expected_vid(trait_ref={:?}, self_ty={:?})",
+               trait_ref,
+               self_ty);
+        match self_ty.sty {
+            ty::TyInfer(ty::TyVar(v)) if expected_vid == v => Some(trait_ref),
+            _ => None,
+        }
+    }
 }

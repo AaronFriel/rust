@@ -8,12 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
-
 use std::ops::FnMut;
 
 pub fn main() {
-    let mut f = |&mut: x: int, y: int| -> int { x + y };
-    let z = f.call_mut((1u, 2));    //~ ERROR type mismatch
+    let mut f = |x: isize, y: isize| -> isize { x + y };
+    let z = f(1_usize, 2);    //~ ERROR mismatched types
     println!("{}", z);
 }

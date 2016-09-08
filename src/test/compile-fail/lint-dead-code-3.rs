@@ -11,6 +11,7 @@
 #![allow(unused_variables)]
 #![allow(non_camel_case_types)]
 #![deny(dead_code)]
+#![feature(libc)]
 
 #![crate_type="lib"]
 
@@ -18,7 +19,7 @@ extern crate libc;
 
 pub use extern_foo as x;
 extern {
-    fn extern_foo();
+    pub fn extern_foo();
 }
 
 struct Foo; //~ ERROR: struct is never used
@@ -29,7 +30,7 @@ impl Foo {
 }
 
 fn bar() { //~ ERROR: function is never used
-    fn baz() {} //~ ERROR: function is never used
+    fn baz() {}
 
     Foo.foo();
     baz();
@@ -79,12 +80,12 @@ mod inner {
         fn f(&self) { f(); }
     }
 
-    impl Trait for int {}
+    impl Trait for isize {}
 
     fn f() {}
 }
 
 pub fn foo() {
-    let a = &1i as &inner::Trait;
+    let a: &inner::Trait = &1_isize;
     a.f();
 }

@@ -8,28 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use target::Target;
+use target::{Target, TargetResult};
 
-pub fn target() -> Target {
-    let mut base = super::linux_base::opts();
-    base.features = "+v7".to_string();
-    // Many of the symbols defined in compiler-rt are also defined in libgcc.  Android
-    // linker doesn't like that by default.
-    base.pre_link_args.push("-Wl,--allow-multiple-definition".to_string());
-    // FIXME #17437 (and #17448): Android doesn't support position dependant executables anymore.
-    base.position_independent_executables = false;
+pub fn target() -> TargetResult {
+    let mut base = super::android_base::opts();
+    base.features = "+v7,+vfp3,+d16".to_string();
+    base.max_atomic_width = 64;
 
-    Target {
-        data_layout: "e-p:32:32:32\
-                      -i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64\
-                      -f32:32:32-f64:64:64\
-                      -v64:64:64-v128:64:128\
-                      -a0:0:64-n32".to_string(),
+    Ok(Target {
         llvm_target: "arm-linux-androideabi".to_string(),
         target_endian: "little".to_string(),
-        target_word_size: "32".to_string(),
+        target_pointer_width: "32".to_string(),
+        data_layout: "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64".to_string(),
         arch: "arm".to_string(),
         target_os: "android".to_string(),
+        target_env: "".to_string(),
+        target_vendor: "unknown".to_string(),
         options: base,
-    }
+    })
 }

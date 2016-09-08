@@ -13,6 +13,7 @@ enum Test {
 }
 
 fn main() {
-    let _x = Test::Foo as *const int;
-    //~^ ERROR illegal cast; cast through an integer first: `Test` as `*const int`
+    let _x = Test::Foo as *const isize;
+    //~^ ERROR casting `Test` as `*const isize` is invalid
+    //~^^ HELP cast through a usize first
 }

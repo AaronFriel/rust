@@ -11,18 +11,25 @@
 // Test using overloaded indexing when the "map" is stored in a
 // field. This caused problems at some point.
 
+
+#![feature(core)]
+
+use std::ops::Index;
+
 struct Foo {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
 struct Bar {
     foo: Foo
 }
 
-impl Index<int,int> for Foo {
-    fn index(&self, z: &int) -> &int {
-        if *z == 0 {
+impl Index<isize> for Foo {
+    type Output = isize;
+
+    fn index(&self, z: isize) -> &isize {
+        if z == 0 {
             &self.x
         } else {
             &self.y
@@ -31,14 +38,14 @@ impl Index<int,int> for Foo {
 }
 
 trait Int {
-    fn get(self) -> int;
-    fn get_from_ref(&self) -> int;
+    fn get(self) -> isize;
+    fn get_from_ref(&self) -> isize;
     fn inc(&mut self);
 }
 
-impl Int for int {
-    fn get(self) -> int { self }
-    fn get_from_ref(&self) -> int { *self }
+impl Int for isize {
+    fn get(self) -> isize { self }
+    fn get_from_ref(&self) -> isize { *self }
     fn inc(&mut self) { *self += 1; }
 }
 
@@ -49,4 +56,3 @@ fn main() {
     } };
     assert_eq!(f.foo[1].get(), 2);
 }
-

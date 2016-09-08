@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -46,6 +45,10 @@
 // lldb-check:[...]$3 = 110
 // lldb-command:continue
 
+#![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
 fn some_generic_fun<T1, T2>(a: T1, b: T2) -> (T2, T1) {
 
     let closure = |x, y| {
@@ -57,8 +60,8 @@ fn some_generic_fun<T1, T2>(a: T1, b: T2) -> (T2, T1) {
 }
 
 fn main() {
-    some_generic_fun(0.5f64, 10i);
-    some_generic_fun(&29i, box 110i);
+    some_generic_fun(0.5f64, 10);
+    some_generic_fun(&29, Box::new(110));
 }
 
 fn zzz() { () }

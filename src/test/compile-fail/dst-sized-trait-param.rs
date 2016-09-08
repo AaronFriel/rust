@@ -12,12 +12,12 @@
 // parameter, the corresponding value must be sized. Also that the
 // self type must be sized if appropriate.
 
-trait Foo<T> { fn take(self, x: &T) { } } // Note: T is sized
+trait Foo<T> : Sized { fn take(self, x: &T) { } } // Note: T is sized
 
-impl Foo<[int]> for uint { }
-//~^ ERROR the trait `core::kinds::Sized` is not implemented for the type `[int]`
+impl Foo<[isize]> for usize { }
+//~^ ERROR `[isize]: std::marker::Sized` is not satisfied
 
-impl Foo<int> for [uint] { }
-//~^ ERROR the trait `core::kinds::Sized` is not implemented for the type `[uint]`
+impl Foo<isize> for [usize] { }
+//~^ ERROR `[usize]: std::marker::Sized` is not satisfied
 
 pub fn main() { }

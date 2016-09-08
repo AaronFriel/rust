@@ -10,14 +10,11 @@
 
 //! The ChaCha random number generator.
 
-use core::prelude::*;
-use core::num::Int;
+use {Rand, Rng, SeedableRng};
 
-use {Rng, SeedableRng, Rand};
-
-const KEY_WORDS    : uint =  8; // 8 words for the 256-bit key
-const STATE_WORDS  : uint = 16;
-const CHACHA_ROUNDS: uint = 20; // Cryptographically secure from 8 upwards as of this writing
+const KEY_WORDS: usize = 8; // 8 words for the 256-bit key
+const STATE_WORDS: usize = 16;
+const CHACHA_ROUNDS: usize = 20; // Cryptographically secure from 8 upwards as of this writing
 
 /// A random number generator that uses the ChaCha20 algorithm [1].
 ///
@@ -28,28 +25,26 @@ const CHACHA_ROUNDS: uint = 20; // Cryptographically secure from 8 upwards as of
 ///
 /// [1]: D. J. Bernstein, [*ChaCha, a variant of
 /// Salsa20*](http://cr.yp.to/chacha.html)
-
+#[derive(Copy, Clone)]
 pub struct ChaChaRng {
-    buffer:  [u32, ..STATE_WORDS], // Internal buffer of output
-    state:   [u32, ..STATE_WORDS], // Initial state
-    index:   uint,                 // Index into state
+    buffer: [u32; STATE_WORDS], // Internal buffer of output
+    state: [u32; STATE_WORDS], // Initial state
+    index: usize, // Index into state
 }
 
-impl Copy for ChaChaRng {}
-
 static EMPTY: ChaChaRng = ChaChaRng {
-    buffer:  [0, ..STATE_WORDS],
-    state:   [0, ..STATE_WORDS],
-    index:   STATE_WORDS
+    buffer: [0; STATE_WORDS],
+    state: [0; STATE_WORDS],
+    index: STATE_WORDS,
 };
 
 
 macro_rules! quarter_round{
     ($a: expr, $b: expr, $c: expr, $d: expr) => {{
-        $a += $b; $d ^= $a; $d = $d.rotate_left(16);
-        $c += $d; $b ^= $c; $b = $b.rotate_left(12);
-        $a += $b; $d ^= $a; $d = $d.rotate_left( 8);
-        $c += $d; $b ^= $c; $b = $b.rotate_left( 7);
+        $a = $a.wrapping_add($b); $d = $d ^ $a; $d = $d.rotate_left(16);
+        $c = $c.wrapping_add($d); $b = $b ^ $c; $b = $b.rotate_left(12);
+        $a = $a.wrapping_add($b); $d = $d ^ $a; $d = $d.rotate_left( 8);
+        $c = $c.wrapping_add($d); $b = $b ^ $c; $b = $b.rotate_left( 7);
     }}
 }
 
@@ -69,25 +64,24 @@ macro_rules! double_round{
 }
 
 #[inline]
-fn core(output: &mut [u32, ..STATE_WORDS], input: &[u32, ..STATE_WORDS]) {
+fn core(output: &mut [u32; STATE_WORDS], input: &[u32; STATE_WORDS]) {
     *output = *input;
 
-    for _ in range(0, CHACHA_ROUNDS / 2) {
+    for _ in 0..CHACHA_ROUNDS / 2 {
         double_round!(output);
     }
 
-    for i in range(0, STATE_WORDS) {
-        output[i] += input[i];
+    for i in 0..STATE_WORDS {
+        output[i] = output[i].wrapping_add(input[i]);
     }
 }
 
 impl ChaChaRng {
-
     /// Create an ChaCha random number generator using the default
     /// fixed key of 8 zero words.
     pub fn new_unseeded() -> ChaChaRng {
         let mut rng = EMPTY;
-        rng.init(&[0, ..KEY_WORDS]);
+        rng.init(&[0; KEY_WORDS]);
         rng
     }
 
@@ -100,9 +94,9 @@ impl ChaChaRng {
     /// associated with a particular nonce can call this function with
     /// arguments `0, desired_nonce`.
     pub fn set_counter(&mut self, counter_low: u64, counter_high: u64) {
-        self.state[12] = (counter_low >>  0) as u32;
+        self.state[12] = (counter_low >> 0) as u32;
         self.state[13] = (counter_low >> 32) as u32;
-        self.state[14] = (counter_high >>  0) as u32;
+        self.state[14] = (counter_high >> 0) as u32;
         self.state[15] = (counter_high >> 32) as u32;
         self.index = STATE_WORDS; // force recomputation
     }
@@ -125,14 +119,14 @@ impl ChaChaRng {
     /// ```
     /// [1]: Daniel J. Bernstein. [*Extending the Salsa20
     /// nonce.*](http://cr.yp.to/papers.html#xsalsa)
-    fn init(&mut self, key: &[u32, ..KEY_WORDS]) {
+    fn init(&mut self, key: &[u32; KEY_WORDS]) {
         self.state[0] = 0x61707865;
         self.state[1] = 0x3320646E;
         self.state[2] = 0x79622D32;
         self.state[3] = 0x6B206574;
 
-        for i in range(0, KEY_WORDS) {
-            self.state[4+i] = key[i];
+        for i in 0..KEY_WORDS {
+            self.state[4 + i] = key[i];
         }
 
         self.state[12] = 0;
@@ -149,11 +143,17 @@ impl ChaChaRng {
         self.index = 0;
         // update 128-bit counter
         self.state[12] += 1;
-        if self.state[12] != 0 { return };
+        if self.state[12] != 0 {
+            return;
+        }
         self.state[13] += 1;
-        if self.state[13] != 0 { return };
+        if self.state[13] != 0 {
+            return;
+        }
         self.state[14] += 1;
-        if self.state[14] != 0 { return };
+        if self.state[14] != 0 {
+            return;
+        }
         self.state[15] += 1;
     }
 }
@@ -172,13 +172,12 @@ impl Rng for ChaChaRng {
 }
 
 impl<'a> SeedableRng<&'a [u32]> for ChaChaRng {
-
     fn reseed(&mut self, seed: &'a [u32]) {
         // reset state
-        self.init(&[0u32, ..KEY_WORDS]);
+        self.init(&[0; KEY_WORDS]);
         // set key in place
-        let key = self.state.slice_mut(4, 4+KEY_WORDS);
-        for (k, s) in key.iter_mut().zip(seed.iter()) {
+        let key = &mut self.state[4..4 + KEY_WORDS];
+        for (k, s) in key.iter_mut().zip(seed) {
             *k = *s;
         }
     }
@@ -196,68 +195,70 @@ impl<'a> SeedableRng<&'a [u32]> for ChaChaRng {
 
 impl Rand for ChaChaRng {
     fn rand<R: Rng>(other: &mut R) -> ChaChaRng {
-        let mut key : [u32, ..KEY_WORDS] = [0, ..KEY_WORDS];
-        for word in key.iter_mut() {
+        let mut key: [u32; KEY_WORDS] = [0; KEY_WORDS];
+        for word in &mut key {
             *word = other.gen();
         }
-        SeedableRng::from_seed(key.as_slice())
+        SeedableRng::from_seed(&key[..])
     }
 }
 
 
 #[cfg(test)]
-mod test {
-    use std::prelude::*;
+mod tests {
+    use std::prelude::v1::*;
 
-    use core::iter::order;
     use {Rng, SeedableRng};
     use super::ChaChaRng;
 
     #[test]
     fn test_rng_rand_seeded() {
         let s = ::test::rng().gen_iter::<u32>().take(8).collect::<Vec<u32>>();
-        let mut ra: ChaChaRng = SeedableRng::from_seed(s.as_slice());
-        let mut rb: ChaChaRng = SeedableRng::from_seed(s.as_slice());
-        assert!(order::equals(ra.gen_ascii_chars().take(100),
-                              rb.gen_ascii_chars().take(100)));
+        let mut ra: ChaChaRng = SeedableRng::from_seed(&*s);
+        let mut rb: ChaChaRng = SeedableRng::from_seed(&*s);
+        assert!(ra.gen_ascii_chars()
+                  .take(100)
+                  .eq(rb.gen_ascii_chars().take(100)));
     }
 
     #[test]
     fn test_rng_seeded() {
-        let seed : &[_] = &[0,1,2,3,4,5,6,7];
+        let seed: &[_] = &[0, 1, 2, 3, 4, 5, 6, 7];
         let mut ra: ChaChaRng = SeedableRng::from_seed(seed);
         let mut rb: ChaChaRng = SeedableRng::from_seed(seed);
-        assert!(order::equals(ra.gen_ascii_chars().take(100),
-                              rb.gen_ascii_chars().take(100)));
+        assert!(ra.gen_ascii_chars()
+                  .take(100)
+                  .eq(rb.gen_ascii_chars().take(100)));
     }
 
     #[test]
     fn test_rng_reseed() {
         let s = ::test::rng().gen_iter::<u32>().take(8).collect::<Vec<u32>>();
-        let mut r: ChaChaRng = SeedableRng::from_seed(s.as_slice());
+        let mut r: ChaChaRng = SeedableRng::from_seed(&*s);
         let string1: String = r.gen_ascii_chars().take(100).collect();
 
-        r.reseed(s.as_slice());
+        r.reseed(&s);
 
         let string2: String = r.gen_ascii_chars().take(100).collect();
         assert_eq!(string1, string2);
     }
 
     #[test]
+    #[rustfmt_skip]
     fn test_rng_true_values() {
         // Test vectors 1 and 2 from
         // http://tools.ietf.org/html/draft-nir-cfrg-chacha20-poly1305-04
-        let seed : &[_] = &[0u32, ..8];
+        let seed: &[_] = &[0; 8];
         let mut ra: ChaChaRng = SeedableRng::from_seed(seed);
 
-        let v = Vec::from_fn(16, |_| ra.next_u32());
+        let v = (0..16).map(|_| ra.next_u32()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(0xade0b876, 0x903df1a0, 0xe56a5d40, 0x28bd8653,
                         0xb819d2bd, 0x1aed8da0, 0xccef36a8, 0xc70d778b,
                         0x7c5941da, 0x8d485751, 0x3fe02477, 0x374ad8b8,
                         0xf4b8436a, 0x1ca11815, 0x69b687c3, 0x8665eeb2));
 
-        let v = Vec::from_fn(16, |_| ra.next_u32());
+        let v = (0..16).map(|_| ra.next_u32()).collect::<Vec<_>>();
         assert_eq!(v,
                    vec!(0xbee7079f, 0x7a385155, 0x7c97ba98, 0x0d082d73,
                         0xa0290fcb, 0x6965e348, 0x3e53c612, 0xed7aee32,
@@ -265,15 +266,15 @@ mod test {
                         0x281fed31, 0x45fb0a51, 0x1f0ae1ac, 0x6f4d794b));
 
 
-        let seed : &[_] = &[0,1,2,3,4,5,6,7];
+        let seed: &[_] = &[0, 1, 2, 3, 4, 5, 6, 7];
         let mut ra: ChaChaRng = SeedableRng::from_seed(seed);
 
         // Store the 17*i-th 32-bit word,
         // i.e., the i-th word of the i-th 16-word block
-        let mut v : Vec<u32> = Vec::new();
-        for _ in range(0u, 16) {
+        let mut v: Vec<u32> = Vec::new();
+        for _ in 0..16 {
             v.push(ra.next_u32());
-            for _ in range(0u, 16) {
+            for _ in 0..16 {
                 ra.next_u32();
             }
         }
@@ -284,5 +285,14 @@ mod test {
                         0x11cfa18e, 0xd3c50049, 0x75c775f6, 0x434c6530,
                         0x2c5bad8f, 0x898881dc, 0x5f1c86d9, 0xc1f8e7f4));
     }
-}
 
+    #[test]
+    fn test_rng_clone() {
+        let seed: &[_] = &[0; 8];
+        let mut rng: ChaChaRng = SeedableRng::from_seed(seed);
+        let mut clone = rng.clone();
+        for _ in 0..16 {
+            assert_eq!(rng.next_u64(), clone.next_u64());
+        }
+    }
+}

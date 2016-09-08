@@ -8,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(PartialEq)]
+
+#[derive(PartialEq, Debug)]
 enum Test<'a> {
-    Slice(&'a int)
+    Slice(&'a isize)
 }
 
 fn main() {
-    assert!(Test::Slice(&1) == Test::Slice(&1))
+    assert_eq!(Test::Slice(&1), Test::Slice(&1))
 }

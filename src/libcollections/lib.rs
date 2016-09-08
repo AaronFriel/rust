@@ -10,111 +10,132 @@
 
 //! Collection types.
 //!
-//! See [std::collections](../std/collections) for a detailed discussion of collections in Rust.
-
+//! See [std::collections](../std/collections/index.html) for a detailed discussion of
+//! collections in Rust.
 
 #![crate_name = "collections"]
-#![experimental]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
+#![unstable(feature = "collections",
+            reason = "library is unlikely to be stabilized with the current \
+                      layout and name, use std::collections instead",
+            issue = "27783")]
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
+       test(no_crate_inject, attr(allow(unused_variables), deny(warnings))))]
 
-#![allow(unknown_features)]
-#![feature(macro_rules, default_type_params, phase, globs)]
-#![feature(unsafe_destructor, import_shadowing, slicing_syntax)]
-#![feature(unboxed_closures)]
+#![cfg_attr(test, allow(deprecated))] // rand
+#![cfg_attr(not(stage0), deny(warnings))]
+
+#![feature(alloc)]
+#![feature(allow_internal_unstable)]
+#![feature(box_patterns)]
+#![feature(box_syntax)]
+#![cfg_attr(not(test), feature(char_escape_debug))]
+#![feature(core_intrinsics)]
+#![feature(dropck_parametricity)]
+#![feature(fmt_internals)]
+#![feature(fused)]
+#![feature(heap_api)]
+#![feature(inclusive_range)]
+#![feature(lang_items)]
+#![feature(nonzero)]
+#![feature(pattern)]
+#![feature(placement_in)]
+#![feature(placement_new_protocol)]
+#![feature(shared)]
+#![feature(slice_patterns)]
+#![feature(specialization)]
+#![feature(staged_api)]
+#![feature(step_by)]
+#![feature(unicode)]
+#![feature(unique)]
+#![cfg_attr(stage0, feature(unsafe_no_drop_flag))]
+#![cfg_attr(test, feature(rand, test))]
+
 #![no_std]
 
-#[phase(plugin, link)] extern crate core;
-extern crate unicode;
+extern crate rustc_unicode;
 extern crate alloc;
 
-#[cfg(test)] extern crate test;
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+#[cfg(test)]
+extern crate test;
 
-#[cfg(test)] #[phase(plugin, link)] extern crate std;
-#[cfg(test)] #[phase(plugin, link)] extern crate log;
-
-
+#[doc(no_inline)]
 pub use binary_heap::BinaryHeap;
-pub use bitv::Bitv;
-pub use bitv_set::BitvSet;
+#[doc(no_inline)]
 pub use btree_map::BTreeMap;
+#[doc(no_inline)]
 pub use btree_set::BTreeSet;
-pub use dlist::DList;
+#[doc(no_inline)]
+pub use linked_list::LinkedList;
+#[doc(no_inline)]
 pub use enum_set::EnumSet;
-pub use ring_buf::RingBuf;
+#[doc(no_inline)]
+pub use vec_deque::VecDeque;
+#[doc(no_inline)]
 pub use string::String;
-pub use tree_map::TreeMap;
-pub use tree_set::TreeSet;
-pub use trie_map::TrieMap;
-pub use trie_set::TrieSet;
+#[doc(no_inline)]
 pub use vec::Vec;
-pub use vec_map::VecMap;
 
+// Needed for the vec! macro
+pub use alloc::boxed;
+
+#[macro_use]
 mod macros;
 
 pub mod binary_heap;
-mod bit;
 mod btree;
-pub mod dlist;
+pub mod borrow;
 pub mod enum_set;
-pub mod ring_buf;
-mod tree;
-mod trie;
+pub mod fmt;
+pub mod linked_list;
+pub mod range;
 pub mod slice;
 pub mod str;
 pub mod string;
 pub mod vec;
-pub mod hash;
-pub mod vec_map;
+pub mod vec_deque;
 
-pub mod bitv {
-    pub use bit::{Bitv, Bits, from_fn, from_bytes};
-}
-
-pub mod bitv_set {
-    pub use bit::{BitvSet, BitPositions, TwoBitPositions};
-}
-
-pub mod tree_map {
-    pub use tree::map::*;
-}
-
-pub mod tree_set {
-    pub use tree::set::*;
-}
-
-pub mod trie_map {
-    pub use trie::map::*;
-}
-
-pub mod trie_set {
-    pub use trie::set::*;
-}
-
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_map {
+    //! A map based on a B-Tree.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub use btree::map::*;
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
 pub mod btree_set {
+    //! A set based on a B-Tree.
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub use btree::set::*;
 }
 
-
-#[cfg(test)] mod bench;
-
-// FIXME(#14344) this shouldn't be necessary
-#[doc(hidden)]
-pub fn fixme_14344_be_sure_to_link_to_collections() {}
-
 #[cfg(not(test))]
 mod std {
-    pub use core::fmt;      // necessary for panic!()
-    pub use core::option;   // necessary for panic!()
-    pub use core::clone;    // deriving(Clone)
-    pub use core::cmp;      // deriving(Eq, Ord, etc.)
-    pub use core::kinds;    // deriving(Copy)
-    pub use hash;           // deriving(Hash)
+    pub use core::ops;      // RangeFull
+}
+
+/// An endpoint of a range of keys.
+#[unstable(feature = "collections_bound", issue = "27787")]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum Bound<T> {
+    /// An inclusive bound.
+    Included(T),
+    /// An exclusive bound.
+    Excluded(T),
+    /// An infinite endpoint. Indicates that there is no bound in this direction.
+    Unbounded,
+}
+
+/// An intermediate trait for specialization of `Extend`.
+#[doc(hidden)]
+trait SpecExtend<I: IntoIterator> {
+    /// Extends `self` with the contents of the given iterator.
+    fn spec_extend(&mut self, iter: I);
 }

@@ -10,63 +10,82 @@
 
 // Test slicing sugar.
 
-#![feature(slicing_syntax)]
+
+#![feature(core)]
 
 extern crate core;
-use core::ops::{Slice,SliceMut};
+use core::ops::{Index, IndexMut, Range, RangeTo, RangeFrom, RangeFull};
 
-static mut COUNT: uint = 0;
+static mut COUNT: usize = 0;
 
 struct Foo;
 
-impl Slice<Foo, Foo> for Foo {
-    fn as_slice_<'a>(&'a self) -> &'a Foo {
+impl Index<Range<Foo>> for Foo {
+    type Output = Foo;
+    fn index(&self, index: Range<Foo>) -> &Foo {
         unsafe { COUNT += 1; }
         self
     }
-    fn slice_from_or_fail<'a>(&'a self, _from: &Foo) -> &'a Foo {
+}
+impl Index<RangeTo<Foo>> for Foo {
+    type Output = Foo;
+    fn index(&self, index: RangeTo<Foo>) -> &Foo {
         unsafe { COUNT += 1; }
         self
     }
-    fn slice_to_or_fail<'a>(&'a self, _to: &Foo) -> &'a Foo {
+}
+impl Index<RangeFrom<Foo>> for Foo {
+    type Output = Foo;
+    fn index(&self, index: RangeFrom<Foo>) -> &Foo {
         unsafe { COUNT += 1; }
         self
     }
-    fn slice_or_fail<'a>(&'a self, _from: &Foo, _to: &Foo) -> &'a Foo {
+}
+impl Index<RangeFull> for Foo {
+    type Output = Foo;
+    fn index(&self, _index: RangeFull) -> &Foo {
         unsafe { COUNT += 1; }
         self
     }
 }
 
-impl SliceMut<Foo, Foo> for Foo {
-    fn as_mut_slice_<'a>(&'a mut self) -> &'a mut Foo {
-        unsafe { COUNT += 1; }
-        self
-    }
-    fn slice_from_or_fail_mut<'a>(&'a mut self, _from: &Foo) -> &'a mut Foo {
-        unsafe { COUNT += 1; }
-        self
-    }
-    fn slice_to_or_fail_mut<'a>(&'a mut self, _to: &Foo) -> &'a mut Foo {
-        unsafe { COUNT += 1; }
-        self
-    }
-    fn slice_or_fail_mut<'a>(&'a mut self, _from: &Foo, _to: &Foo) -> &'a mut Foo {
+impl IndexMut<Range<Foo>> for Foo {
+    fn index_mut(&mut self, index: Range<Foo>) -> &mut Foo {
         unsafe { COUNT += 1; }
         self
     }
 }
+impl IndexMut<RangeTo<Foo>> for Foo {
+    fn index_mut(&mut self, index: RangeTo<Foo>) -> &mut Foo {
+        unsafe { COUNT += 1; }
+        self
+    }
+}
+impl IndexMut<RangeFrom<Foo>> for Foo {
+    fn index_mut(&mut self, index: RangeFrom<Foo>) -> &mut Foo {
+        unsafe { COUNT += 1; }
+        self
+    }
+}
+impl IndexMut<RangeFull> for Foo {
+    fn index_mut(&mut self, _index: RangeFull) -> &mut Foo {
+        unsafe { COUNT += 1; }
+        self
+    }
+}
+
+
 fn main() {
     let mut x = Foo;
-    x[];
-    x[Foo..];
-    x[..Foo];
-    x[Foo..Foo];
-    x[mut];
-    x[mut Foo..];
-    x[mut ..Foo];
-    x[mut Foo..Foo];
+    &x[..];
+    &x[Foo..];
+    &x[..Foo];
+    &x[Foo..Foo];
+    &mut x[..];
+    &mut x[Foo..];
+    &mut x[..Foo];
+    &mut x[Foo..Foo];
     unsafe {
-        assert!(COUNT == 8);
+        assert_eq!(COUNT, 8);
     }
 }

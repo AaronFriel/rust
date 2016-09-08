@@ -12,34 +12,36 @@
 // can't be used as rvalues
 
 use std::ops::Index;
-use std::fmt::Show;
+use std::fmt::Debug;
 
+#[derive(Copy, Clone)]
 struct S;
 
-impl Copy for S {}
+impl Index<usize> for S {
+    type Output = str;
 
-impl Index<uint, str> for S {
-    fn index<'a>(&'a self, _: &uint) -> &'a str {
+    fn index(&self, _: usize) -> &str {
         "hello"
     }
 }
 
+#[derive(Copy, Clone)]
 struct T;
 
-impl Copy for T {}
+impl Index<usize> for T {
+    type Output = Debug + 'static;
 
-impl Index<uint, Show + 'static> for T {
-    fn index<'a>(&'a self, idx: &uint) -> &'a (Show + 'static) {
-        static x: uint = 42;
+    fn index<'a>(&'a self, idx: usize) -> &'a (Debug + 'static) {
+        static x: usize = 42;
         &x
     }
 }
 
 fn main() {
     S[0];
-    //~^ ERROR cannot move out of dereference
+    //~^ ERROR cannot move out of indexed content
     //~^^ ERROR E0161
     T[0];
-    //~^ ERROR cannot move out of dereference
+    //~^ ERROR cannot move out of indexed content
     //~^^ ERROR E0161
 }

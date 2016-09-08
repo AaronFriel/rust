@@ -10,5 +10,5 @@
 
 fn main() {
     let x: Option<&[u8]> = Some("foo").map(std::mem::transmute);
-    //~^ ERROR: is not implemented for the type
+    //~^ ERROR E0277
 }

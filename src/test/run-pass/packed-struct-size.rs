@@ -9,12 +9,13 @@
 // except according to those terms.
 
 
+
 use std::mem;
 
 #[repr(packed)]
 struct S4 {
     a: u8,
-    b: [u8, .. 3],
+    b: [u8;  3],
 }
 
 #[repr(packed)]

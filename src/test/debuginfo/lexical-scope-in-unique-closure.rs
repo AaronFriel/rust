@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -70,6 +69,10 @@
 // lldb-check:[...]$5 = false
 // lldb-command:continue
 
+
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
 fn main() {
 
     let x = false;
@@ -77,7 +80,7 @@ fn main() {
     zzz(); // #break
     sentinel();
 
-    let unique_closure = |: x:int| {
+    let unique_closure = |x:isize| {
         zzz(); // #break
         sentinel();
 

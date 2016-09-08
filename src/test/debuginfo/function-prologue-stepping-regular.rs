@@ -126,8 +126,10 @@
 // lldb-command:continue
 
 #![allow(unused_variables)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
-fn immediate_args(a: int, b: bool, c: f64) {
+fn immediate_args(a: isize, b: bool, c: f64) {
     ()
 }
 
@@ -147,7 +149,7 @@ fn non_immediate_args(a: BigStruct, b: BigStruct) {
 }
 
 fn binding(a: i64, b: u64, c: f64) {
-    let x = 0i;
+    let x = 0;
 }
 
 fn assignment(mut a: u64, b: u64, c: f64) {
@@ -155,7 +157,7 @@ fn assignment(mut a: u64, b: u64, c: f64) {
 }
 
 fn function_call(x: u64, y: u64, z: f64) {
-    std::io::stdio::print("Hi!")
+    println!("Hi!")
 }
 
 fn identifier(x: u64, y: u64, z: f64) -> u64 {

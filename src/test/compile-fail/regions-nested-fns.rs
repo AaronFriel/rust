@@ -8,23 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+
 fn ignore<T>(t: T) {}
 
-fn nested<'x>(x: &'x int) {
+fn nested<'x>(x: &'x isize) {
     let y = 3;
-    let mut ay = &y; //~ ERROR cannot infer
+    let mut ay = &y; //~ ERROR E0495
 
-    ignore::< for<'z>|&'z int|>(|z| {
+    ignore::<Box<for<'z> FnMut(&'z isize)>>(Box::new(|z| {
         ay = x;
         ay = &y;
         ay = z;
-    });
+    }));
 
-    ignore::< for<'z>|&'z int| -> &'z int>(|z| {
-        if false { return x; }  //~ ERROR cannot infer an appropriate lifetime for automatic
+    ignore::< Box<for<'z> FnMut(&'z isize) -> &'z isize>>(Box::new(|z| {
+        if false { return x; } //~ ERROR E0312
         if false { return ay; }
         return z;
-    });
+    }));
 }
 
 fn main() {}

@@ -8,6 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
 static tau: f64 = 2.0*3.14159265358979323;
 
 struct Point {x: f64, y: f64}
@@ -40,14 +44,14 @@ fn select_based_on_unit_circle<'r, T>(
     shape.select(threshold, a, b)
 }
 
-#[deriving(Clone)]
+#[derive(Clone)]
 struct thing {
     x: A
 }
 
-#[deriving(Clone)]
+#[derive(Clone)]
 struct A {
-    a: int
+    a: isize
 }
 
 fn thing(x: A) -> thing {
@@ -57,17 +61,17 @@ fn thing(x: A) -> thing {
 }
 
 impl thing {
-    pub fn bar(self: Box<thing>) -> int { self.x.a }
-    pub fn quux(&self) -> int { self.x.a }
+    pub fn bar(self: Box<thing>) -> isize { self.x.a }
+    pub fn quux(&self) -> isize { self.x.a }
     pub fn baz<'a>(&'a self) -> &'a A { &self.x }
-    pub fn spam(self) -> int { self.x.a }
+    pub fn spam(self) -> isize { self.x.a }
 }
 
 trait Nus { fn f(&self); }
 impl Nus for thing { fn f(&self) {} }
 
 pub fn main() {
-    let y = box thing(A {a: 10});
+    let y: Box<_> = box thing(A {a: 10});
     assert_eq!(y.clone().bar(), 10);
     assert_eq!(y.quux(), 10);
 

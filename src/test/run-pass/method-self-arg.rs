@@ -10,11 +10,14 @@
 
 // Test method calls with self as an argument
 
-static mut COUNT: uint = 1;
 
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+static mut COUNT: usize = 1;
+
+#[derive(Copy, Clone)]
 struct Foo;
-
-impl Copy for Foo {}
 
 impl Foo {
     fn foo(self, x: &Foo) {
@@ -52,5 +55,5 @@ fn main() {
 
     x.foo(&x);
 
-    unsafe { assert!(COUNT == 2u*3*3*3*5*5*5*7*7*7); }
+    unsafe { assert_eq!(COUNT, 2*3*3*3*5*5*5*7*7*7); }
 }

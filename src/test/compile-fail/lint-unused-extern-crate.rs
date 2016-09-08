@@ -8,20 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// aux-build:lint-unused-extern-crate.rs
+// aux-build:lint_unused_extern_crate.rs
 
-#![feature(globs)]
 #![deny(unused_extern_crates)]
 #![allow(unused_variables)]
+#![allow(deprecated)]
+#![feature(libc)]
+#![feature(collections)]
+#![feature(rand)]
 
 extern crate libc; //~ ERROR: unused extern crate
 
-extern crate "collections" as collecs; // no error, it is used
+extern crate collections as collecs; // no error, it is used
 
 extern crate rand; // no error, the use marks it as used
                    // even if imported objects aren't used
 
-extern crate "lint-unused-extern-crate" as other; // no error, the use * marks it as used
+extern crate lint_unused_extern_crate as other; // no error, the use * marks it as used
 
 #[allow(unused_imports)]
 use rand::isaac::IsaacRng;
@@ -29,6 +32,6 @@ use rand::isaac::IsaacRng;
 use other::*;
 
 fn main() {
-    let x: collecs::vec::Vec<uint> = Vec::new();
+    let x: collecs::vec::Vec<usize> = Vec::new();
     let y = foo();
 }

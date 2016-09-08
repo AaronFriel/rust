@@ -8,13 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub fn foo(params: Option<&[&str]>) -> uint {
-    params.unwrap().head().unwrap().len()
+pub fn foo(params: Option<&[&str]>) -> usize {
+    params.unwrap().first().unwrap().len()
 }
 
 fn main() {
     let name = "Foo";
-    let msg = foo(Some(&[name.as_slice()]));
-//~^ ERROR mismatched types: expected `core::option::Option<&[&str]>`
+    let x = Some(&[name]);
+    let msg = foo(x);
+//~^ ERROR mismatched types
+//~| expected type `std::option::Option<&[&str]>`
+//~| found type `std::option::Option<&[&str; 1]>`
+//~| expected slice, found array of 1 elements
     assert_eq!(msg, 3);
 }

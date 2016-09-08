@@ -8,27 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(macro_rules)]
-
-#[deriving(Show)]
+#[derive(Debug)]
 struct Unit;
 
-#[deriving(Show)]
-struct Tuple(int, uint);
+#[derive(Debug)]
+struct Tuple(isize, usize);
 
-#[deriving(Show)]
-struct Struct { x: int, y: uint }
+#[derive(Debug)]
+struct Struct { x: isize, y: usize }
 
-#[deriving(Show)]
+#[derive(Debug)]
 enum Enum {
     Nullary,
-    Variant(int, uint),
-    StructVariant { x: int, y : uint }
+    Variant(isize, usize),
+    StructVariant { x: isize, y : usize }
 }
 
 macro_rules! t {
     ($x:expr, $expected:expr) => {
-        assert_eq!(format!("{}", $x), $expected.to_string())
+        assert_eq!(format!("{:?}", $x), $expected.to_string())
     }
 }
 

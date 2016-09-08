@@ -10,15 +10,15 @@
 
 struct NoCloneOrEq;
 
-#[deriving(PartialEq)]
+#[derive(PartialEq)]
 struct E {
     x: NoCloneOrEq //~ ERROR binary operation `==` cannot be applied to type `NoCloneOrEq`
          //~^ ERROR binary operation `!=` cannot be applied to type `NoCloneOrEq`
 }
-#[deriving(Clone)]
+#[derive(Clone)]
 struct C {
     x: NoCloneOrEq
-    //~^ ERROR the trait `core::clone::Clone` is not implemented for the type `NoCloneOrEq`
+    //~^ ERROR `NoCloneOrEq: std::clone::Clone` is not satisfied
 }
 
 

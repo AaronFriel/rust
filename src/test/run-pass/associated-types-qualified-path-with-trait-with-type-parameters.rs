@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(associated_types)]
+// pretty-expanded FIXME #23616
 
 trait Foo<T> {
     type Bar;

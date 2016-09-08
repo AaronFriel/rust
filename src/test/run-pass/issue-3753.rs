@@ -9,24 +9,24 @@
 // except according to those terms.
 
 // Issue #3656
-// Issue Name: pub method preceeded by attribute can't be parsed
+// Issue Name: pub method preceded by attribute can't be parsed
 // Abstract: Visibility parsing failed when compiler parsing
+
+#![feature(core)]
 
 use std::f64;
 
+#[derive(Copy, Clone)]
 pub struct Point {
     x: f64,
     y: f64
 }
 
-impl Copy for Point {}
-
+#[derive(Copy, Clone)]
 pub enum Shape {
     Circle(Point, f64),
     Rectangle(Point, Point)
 }
-
-impl Copy for Shape {}
 
 impl Shape {
     pub fn area(&self, sh: Shape) -> f64 {

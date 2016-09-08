@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-fn test<'x>(x: &'x int) {
-    drop::< for<'z>|&'z int| -> &'z int >(|z| {
-        x
-        //~^ ERROR cannot infer an appropriate lifetime
-    });
+fn test<'x>(x: &'x isize) {
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    drop::<Box<for<'z> FnMut(&'z isize) -> &'z isize>>(Box::new(|z| {
+        x //~ ERROR E0312
+    }));
 }
 
 fn main() {}

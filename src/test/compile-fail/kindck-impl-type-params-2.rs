@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
+
 trait Foo {
 }
 
@@ -17,7 +19,7 @@ impl<T:Copy> Foo for T {
 fn take_param<T:Foo>(foo: &T) { }
 
 fn main() {
-    let x = box 3i;
+    let x: Box<_> = box 3;
     take_param(&x);
-    //~^ ERROR the trait `core::kinds::Copy` is not implemented
+    //~^ ERROR `Box<{integer}>: std::marker::Copy` is not satisfied
 }

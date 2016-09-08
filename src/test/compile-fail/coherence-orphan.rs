@@ -8,18 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// aux-build:coherence-orphan-lib.rs
+// aux-build:coherence_orphan_lib.rs
 
-extern crate "coherence-orphan-lib" as lib;
+#![feature(optin_builtin_traits)]
+
+extern crate coherence_orphan_lib as lib;
 
 use lib::TheTrait;
 
 struct TheType;
 
-impl TheTrait<uint> for int { } //~ ERROR E0117
+impl TheTrait<usize> for isize { }
+//~^ ERROR E0117
 
-impl TheTrait<TheType> for int { }
+impl TheTrait<TheType> for isize { }
 
-impl TheTrait<int> for TheType { }
+impl TheTrait<isize> for TheType { }
+
+impl !Send for Vec<isize> { }
+//~^ ERROR E0117
 
 fn main() { }

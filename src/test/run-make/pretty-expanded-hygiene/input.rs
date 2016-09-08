@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(macro_rules)]
 // minimal junk
-#![no_std]
+#![feature(no_core)]
+#![no_core]
 
 macro_rules! foo {
     ($x: ident) => { y + $x }
@@ -20,3 +20,5 @@ fn bar() {
     let x = 1;
     foo!(x)
 }
+
+fn y() {}

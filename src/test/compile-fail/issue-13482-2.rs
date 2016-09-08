@@ -10,12 +10,12 @@
 
 // compile-flags:-Z verbose
 
+#![feature(slice_patterns)]
+
 fn main() {
     let x = [1,2];
     let y = match x {
-        [] => None,
-        //~^ ERROR types: expected `[_#0i, ..2]`, found `[_#7t, ..0]`
-        //         (expected array of 2 elements, found array of 0 elements)
+        [] => None, //~ ERROR pattern requires 0 elements but array has 2
         [a,_] => Some(a)
     };
 }

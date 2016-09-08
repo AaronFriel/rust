@@ -8,18 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
-
 use std::ops::FnMut;
 
-fn call_it<F:FnMut<(int,int),int>>(y: int, mut f: F) -> int {
-    f.call_mut((2, y))
+fn call_it<F:FnMut(i32,i32)->i32>(y: i32, mut f: F) -> i32 {
+    f(2, y)
 }
 
 pub fn main() {
-    let f = |&mut: x: int, y: int| -> int { x + y };
+    let f = |x: i32, y: i32| -> i32 { x + y };
     let z = call_it(3, f);
     println!("{}", z);
     assert_eq!(z, 5);
 }
-

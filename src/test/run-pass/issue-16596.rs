@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-trait MatrixRow {}
+
+trait MatrixRow { fn dummy(&self) { }}
 
 struct Mat;
 
@@ -18,7 +19,9 @@ struct Rows<M: MatrixRow> {
     mat: M,
 }
 
-impl<'a> Iterator<()> for Rows<&'a Mat> {
+impl<'a> Iterator for Rows<&'a Mat> {
+    type Item = ();
+
     fn next(&mut self) -> Option<()> {
         unimplemented!()
     }

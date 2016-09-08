@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Verify that single-variant enums cant be de-referenced
+// Verify that single-variant enums can't be de-referenced
 // Regression test for issue #9814
 
-enum Foo { Bar(int) }
+enum Foo { Bar(isize) }
 
 fn main() {
     let _ = *Foo::Bar(2); //~ ERROR type `Foo` cannot be dereferenced

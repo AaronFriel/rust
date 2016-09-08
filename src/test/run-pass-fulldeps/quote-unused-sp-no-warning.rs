@@ -8,18 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android
+// ignore-cross-compile
 // ignore-pretty: does not work well with `--test`
 
-#![feature(quote)]
-#![deny(unused_variable)]
+#![feature(quote, rustc_private)]
+#![deny(unused_variables)]
 
 extern crate syntax;
 
 use syntax::ext::base::ExtCtxt;
 
 fn test(cx: &mut ExtCtxt) {
-    let foo = 10i;
+    let foo = 10;
     let _e = quote_expr!(cx, $foo);
 }
 

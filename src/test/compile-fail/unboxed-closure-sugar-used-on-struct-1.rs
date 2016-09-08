@@ -11,8 +11,8 @@
 
 // Test that parentheses form doesn't work with struct types appearing in local variables.
 
-struct Bar<A,R> {
-    f: A, r: R
+struct Bar<A> {
+    f: A
 }
 
 fn bar() {
@@ -21,4 +21,3 @@ fn bar() {
 }
 
 fn main() { }
-

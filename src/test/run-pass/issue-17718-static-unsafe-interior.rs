@@ -8,41 +8,55 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::kinds::marker;
+// pretty-expanded FIXME #23616
+
+#![feature(core)]
+#![feature(const_fn)]
+
+
+use std::marker;
 use std::cell::UnsafeCell;
 
+struct MyUnsafePack<T>(UnsafeCell<T>);
+
+unsafe impl<T: Send> Sync for MyUnsafePack<T> {}
+
 struct MyUnsafe<T> {
-    value: UnsafeCell<T>
+    value: MyUnsafePack<T>
 }
 
 impl<T> MyUnsafe<T> {
     fn forbidden(&self) {}
 }
 
+unsafe impl<T: Send> Sync for MyUnsafe<T> {}
+
 enum UnsafeEnum<T> {
     VariantSafe,
     VariantUnsafe(UnsafeCell<T>)
 }
 
-static STATIC1: UnsafeEnum<int> = UnsafeEnum::VariantSafe;
+unsafe impl<T: Send> Sync for UnsafeEnum<T> {}
 
-static STATIC2: UnsafeCell<int> = UnsafeCell { value: 1 };
-const CONST: UnsafeCell<int> = UnsafeCell { value: 1 };
-static STATIC3: MyUnsafe<int> = MyUnsafe{value: CONST};
+static STATIC1: UnsafeEnum<isize> = UnsafeEnum::VariantSafe;
 
-static STATIC4: &'static UnsafeCell<int> = &STATIC2;
+static STATIC2: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(1));
+const CONST: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(1));
+static STATIC3: MyUnsafe<isize> = MyUnsafe{value: CONST};
+
+static STATIC4: &'static MyUnsafePack<isize> = &STATIC2;
 
 struct Wrap<T> {
     value: T
 }
 
-static UNSAFE: UnsafeCell<int> = UnsafeCell{value: 1};
-static WRAPPED_UNSAFE: Wrap<&'static UnsafeCell<int>> = Wrap { value: &UNSAFE };
+unsafe impl<T: Send> Sync for Wrap<T> {}
+
+static UNSAFE: MyUnsafePack<isize> = MyUnsafePack(UnsafeCell::new(2));
+static WRAPPED_UNSAFE: Wrap<&'static MyUnsafePack<isize>> = Wrap { value: &UNSAFE };
 
 fn main() {
     let a = &STATIC1;
 
     STATIC3.forbidden()
 }
-
-

@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:task '<unnamed>' panicked at 'test'
+// error-pattern:thread '<unnamed>' panicked at 'test'
 
-use std::task;
+use std::thread;
 
 fn main() {
-    let r: Result<int,_> = task::try(move|| {
-        panic!("test");
-        1i
-    });
+    let r: Result<(), _> = thread::spawn(move || {
+                               panic!("test");
+                           })
+                               .join();
     assert!(r.is_ok());
 }

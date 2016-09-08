@@ -10,8 +10,8 @@
 
 // Test that parentheses form doesn't work with struct types appearing in argument types.
 
-struct Bar<A,R> {
-    f: A, r: R
+struct Bar<A> {
+    f: A
 }
 
 fn foo(b: Box<Bar()>) {
@@ -19,4 +19,3 @@ fn foo(b: Box<Bar()>) {
 }
 
 fn main() { }
-

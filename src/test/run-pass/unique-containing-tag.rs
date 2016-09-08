@@ -8,10 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub fn main() {
-    enum t { t1(int), t2(int), }
+// pretty-expanded FIXME #23616
 
-    let _x = box t::t1(10);
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+pub fn main() {
+    enum t { t1(isize), t2(isize), }
+
+    let _x: Box<_> = box t::t1(10);
 
     /*alt *x {
       t1(a) {

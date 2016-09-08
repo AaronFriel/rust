@@ -8,20 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![macro_escape]
-
-macro_rules! uint_module (($T:ty, $T_i:ident) => (
+macro_rules! uint_module { ($T:ident, $T_i:ident) => (
 #[cfg(test)]
 mod tests {
     use core::$T_i::*;
-    use core::num::Int;
     use num;
+    use core::ops::{BitOr, BitAnd, BitXor, Shl, Shr, Not};
+    use std::str::FromStr;
+    use std::mem;
 
     #[test]
     fn test_overflows() {
         assert!(MAX > 0);
         assert!(MIN <= 0);
-        assert!(MIN + MAX + 1 == 0);
+        assert!((MIN + MAX).wrapping_add(1) == 0);
     }
 
     #[test]
@@ -34,17 +34,17 @@ mod tests {
         assert!(0b1110 as $T == (0b1100 as $T).bitor(0b1010 as $T));
         assert!(0b1000 as $T == (0b1100 as $T).bitand(0b1010 as $T));
         assert!(0b0110 as $T == (0b1100 as $T).bitxor(0b1010 as $T));
-        assert!(0b1110 as $T == (0b0111 as $T).shl(1u));
-        assert!(0b0111 as $T == (0b1110 as $T).shr(1u));
+        assert!(0b1110 as $T == (0b0111 as $T).shl(1));
+        assert!(0b0111 as $T == (0b1110 as $T).shr(1));
         assert!(MAX - (0b1011 as $T) == (0b1011 as $T).not());
     }
 
-    static A: $T = 0b0101100;
-    static B: $T = 0b0100001;
-    static C: $T = 0b1111001;
+    const A: $T = 0b0101100;
+    const B: $T = 0b0100001;
+    const C: $T = 0b1111001;
 
-    static _0: $T = 0;
-    static _1: $T = !0;
+    const _0: $T = 0;
+    const _1: $T = !0;
 
     #[test]
     fn test_count_ones() {
@@ -55,9 +55,10 @@ mod tests {
 
     #[test]
     fn test_count_zeros() {
-        assert!(A.count_zeros() == BITS - 3);
-        assert!(B.count_zeros() == BITS - 2);
-        assert!(C.count_zeros() == BITS - 5);
+        let bits = mem::size_of::<$T>() * 8;
+        assert!(A.count_zeros() == bits as u32 - 3);
+        assert!(B.count_zeros() == bits as u32 - 2);
+        assert!(C.count_zeros() == bits as u32 - 5);
     }
 
     #[test]
@@ -98,30 +99,60 @@ mod tests {
 
     #[test]
     fn test_le() {
-        assert_eq!(Int::from_le(A.to_le()), A);
-        assert_eq!(Int::from_le(B.to_le()), B);
-        assert_eq!(Int::from_le(C.to_le()), C);
-        assert_eq!(Int::from_le(_0), _0);
-        assert_eq!(Int::from_le(_1), _1);
+        assert_eq!($T::from_le(A.to_le()), A);
+        assert_eq!($T::from_le(B.to_le()), B);
+        assert_eq!($T::from_le(C.to_le()), C);
+        assert_eq!($T::from_le(_0), _0);
+        assert_eq!($T::from_le(_1), _1);
         assert_eq!(_0.to_le(), _0);
         assert_eq!(_1.to_le(), _1);
     }
 
     #[test]
     fn test_be() {
-        assert_eq!(Int::from_be(A.to_be()), A);
-        assert_eq!(Int::from_be(B.to_be()), B);
-        assert_eq!(Int::from_be(C.to_be()), C);
-        assert_eq!(Int::from_be(_0), _0);
-        assert_eq!(Int::from_be(_1), _1);
+        assert_eq!($T::from_be(A.to_be()), A);
+        assert_eq!($T::from_be(B.to_be()), B);
+        assert_eq!($T::from_be(C.to_be()), C);
+        assert_eq!($T::from_be(_0), _0);
+        assert_eq!($T::from_be(_1), _1);
         assert_eq!(_0.to_be(), _0);
         assert_eq!(_1.to_be(), _1);
     }
 
     #[test]
     fn test_unsigned_checked_div() {
-        assert!(10u.checked_div(2) == Some(5));
-        assert!(5u.checked_div(0) == None);
+        assert!((10 as $T).checked_div(2) == Some(5));
+        assert!((5 as $T).checked_div(0) == None);
+    }
+
+    fn from_str<T: FromStr>(t: &str) -> Option<T> {
+        FromStr::from_str(t).ok()
+    }
+
+    #[test]
+    pub fn test_from_str() {
+        assert_eq!(from_str::<$T>("0"), Some(0 as $T));
+        assert_eq!(from_str::<$T>("3"), Some(3 as $T));
+        assert_eq!(from_str::<$T>("10"), Some(10 as $T));
+        assert_eq!(from_str::<u32>("123456789"), Some(123456789 as u32));
+        assert_eq!(from_str::<$T>("00100"), Some(100 as $T));
+
+        assert_eq!(from_str::<$T>(""), None);
+        assert_eq!(from_str::<$T>(" "), None);
+        assert_eq!(from_str::<$T>("x"), None);
+    }
+
+    #[test]
+    pub fn test_parse_bytes() {
+        assert_eq!($T::from_str_radix("123", 10), Ok(123 as $T));
+        assert_eq!($T::from_str_radix("1001", 2), Ok(9 as $T));
+        assert_eq!($T::from_str_radix("123", 8), Ok(83 as $T));
+        assert_eq!(u16::from_str_radix("123", 16), Ok(291 as u16));
+        assert_eq!(u16::from_str_radix("ffff", 16), Ok(65535 as u16));
+        assert_eq!($T::from_str_radix("z", 36), Ok(35 as $T));
+
+        assert_eq!($T::from_str_radix("Z", 10).ok(), None::<$T>);
+        assert_eq!($T::from_str_radix("_", 2).ok(), None::<$T>);
     }
 }
-))
+)}

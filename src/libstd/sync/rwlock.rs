@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use prelude::*;
-
-use kinds::marker;
 use cell::UnsafeCell;
+use fmt;
+use marker;
+use mem;
+use ops::{Deref, DerefMut};
+use ptr;
+use sys_common::poison::{self, LockResult, TryLockError, TryLockResult};
 use sys_common::rwlock as sys;
-use sync::poison;
 
 /// A reader-writer lock
 ///
@@ -22,117 +24,101 @@ use sync::poison;
 /// of the underlying data (exclusive access) and the read portion of this lock
 /// typically allows for read-only access (shared access).
 ///
+/// The priority policy of the lock is dependent on the underlying operating
+/// system's implementation, and this type does not guarantee that any
+/// particular policy will be used.
+///
 /// The type parameter `T` represents the data that this lock protects. It is
-/// required that `T` satisfies `Send` to be shared across tasks and `Sync` to
+/// required that `T` satisfies `Send` to be shared across threads and `Sync` to
 /// allow concurrent access through readers. The RAII guards returned from the
 /// locking methods implement `Deref` (and `DerefMut` for the `write` methods)
 /// to allow access to the contained of the lock.
 ///
-/// RWLocks, like Mutexes, will become poisoned on panics. Note, however, that
-/// an RWLock may only be poisoned if a panic occurs while it is locked
+/// # Poisoning
+///
+/// An `RwLock`, like `Mutex`, will become poisoned on a panic. Note, however,
+/// that an `RwLock` may only be poisoned if a panic occurs while it is locked
 /// exclusively (write mode). If a panic occurs in any reader, then the lock
 /// will not be poisoned.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
-/// use std::sync::RWLock;
+/// use std::sync::RwLock;
 ///
-/// let lock = RWLock::new(5i);
+/// let lock = RwLock::new(5);
 ///
 /// // many reader locks can be held at once
 /// {
-///     let r1 = lock.read();
-///     let r2 = lock.read();
+///     let r1 = lock.read().unwrap();
+///     let r2 = lock.read().unwrap();
 ///     assert_eq!(*r1, 5);
 ///     assert_eq!(*r2, 5);
 /// } // read locks are dropped at this point
 ///
 /// // only one write lock may be held, however
 /// {
-///     let mut w = lock.write();
+///     let mut w = lock.write().unwrap();
 ///     *w += 1;
 ///     assert_eq!(*w, 6);
 /// } // write lock is dropped here
 /// ```
-pub struct RWLock<T> {
-    inner: Box<StaticRWLock>,
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct RwLock<T: ?Sized> {
+    inner: Box<sys::RWLock>,
+    poison: poison::Flag,
     data: UnsafeCell<T>,
 }
 
-/// Structure representing a staticaly allocated RWLock.
-///
-/// This structure is intended to be used inside of a `static` and will provide
-/// automatic global access as well as lazy initialization. The internal
-/// resources of this RWLock, however, must be manually deallocated.
-///
-/// # Example
-///
-/// ```
-/// use std::sync::{StaticRWLock, RWLOCK_INIT};
-///
-/// static LOCK: StaticRWLock = RWLOCK_INIT;
-///
-/// {
-///     let _g = LOCK.read();
-///     // ... shared read access
-/// }
-/// {
-///     let _g = LOCK.write();
-///     // ... exclusive write access
-/// }
-/// unsafe { LOCK.destroy() } // free all resources
-/// ```
-pub struct StaticRWLock {
-    inner: sys::RWLock,
-    poison: UnsafeCell<poison::Flag>,
-}
-
-/// Constant initialization for a statically-initialized rwlock.
-pub const RWLOCK_INIT: StaticRWLock = StaticRWLock {
-    inner: sys::RWLOCK_INIT,
-    poison: UnsafeCell { value: poison::Flag { failed: false } },
-};
+#[stable(feature = "rust1", since = "1.0.0")]
+unsafe impl<T: ?Sized + Send + Sync> Send for RwLock<T> {}
+#[stable(feature = "rust1", since = "1.0.0")]
+unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 
 /// RAII structure used to release the shared read access of a lock when
 /// dropped.
 #[must_use]
-pub struct RWLockReadGuard<'a, T: 'a> {
-    __lock: &'a RWLock<T>,
-    __guard: StaticRWLockReadGuard,
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct RwLockReadGuard<'a, T: ?Sized + 'a> {
+    __lock: &'a RwLock<T>,
 }
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T: ?Sized> !marker::Send for RwLockReadGuard<'a, T> {}
 
 /// RAII structure used to release the exclusive write access of a lock when
 /// dropped.
 #[must_use]
-pub struct RWLockWriteGuard<'a, T: 'a> {
-    __lock: &'a RWLock<T>,
-    __guard: StaticRWLockWriteGuard,
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct RwLockWriteGuard<'a, T: ?Sized + 'a> {
+    __lock: &'a RwLock<T>,
+    __poison: poison::Guard,
 }
 
-/// RAII structure used to release the shared read access of a lock when
-/// dropped.
-#[must_use]
-pub struct StaticRWLockReadGuard {
-    lock: &'static sys::RWLock,
-    marker: marker::NoSend,
-}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T: ?Sized> !marker::Send for RwLockWriteGuard<'a, T> {}
 
-/// RAII structure used to release the exclusive write access of a lock when
-/// dropped.
-#[must_use]
-pub struct StaticRWLockWriteGuard {
-    lock: &'static sys::RWLock,
-    marker: marker::NoSend,
-    poison: poison::Guard<'static>,
-}
-
-impl<T: Send + Sync> RWLock<T> {
-    /// Creates a new instance of an RWLock which is unlocked and read to go.
-    pub fn new(t: T) -> RWLock<T> {
-        RWLock { inner: box RWLOCK_INIT, data: UnsafeCell::new(t) }
+impl<T> RwLock<T> {
+    /// Creates a new instance of an `RwLock<T>` which is unlocked.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::RwLock;
+    ///
+    /// let lock = RwLock::new(5);
+    /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new(t: T) -> RwLock<T> {
+        RwLock {
+            inner: box sys::RWLock::new(),
+            poison: poison::Flag::new(),
+            data: UnsafeCell::new(t),
+        }
     }
+}
 
+impl<T: ?Sized> RwLock<T> {
     /// Locks this rwlock with shared read access, blocking the current thread
     /// until it can be acquired.
     ///
@@ -145,44 +131,50 @@ impl<T: Send + Sync> RWLock<T> {
     /// Returns an RAII guard which will release this thread's shared access
     /// once it is dropped.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// This function will panic if the RWLock is poisoned. An RWLock is
-    /// poisoned whenever a writer panics while holding an exclusive lock. The
-    /// panic will occur immediately after the lock has been acquired.
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock.
+    /// The failure will occur immediately after the lock has been acquired.
     #[inline]
-    pub fn read(&self) -> RWLockReadGuard<T> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn read(&self) -> LockResult<RwLockReadGuard<T>> {
         unsafe {
-            let lock: &'static StaticRWLock = &*(&*self.inner as *const _);
-            RWLockReadGuard::new(self, lock.read())
+            self.inner.read();
+            RwLockReadGuard::new(self)
         }
     }
 
-    /// Attempt to acquire this lock with shared read access.
+    /// Attempts to acquire this rwlock with shared read access.
     ///
-    /// This function will never block and will return immediately if `read`
-    /// would otherwise succeed. Returns `Some` of an RAII guard which will
-    /// release the shared access of this thread when dropped, or `None` if the
-    /// access could not be granted. This method does not provide any
-    /// guarantees with respect to the ordering of whether contentious readers
-    /// or writers will acquire the lock first.
+    /// If the access could not be granted at this time, then `Err` is returned.
+    /// Otherwise, an RAII guard is returned which will release the shared access
+    /// when it is dropped.
     ///
-    /// # Panics
+    /// This function does not block.
     ///
-    /// This function will panic if the RWLock is poisoned. An RWLock is
-    /// poisoned whenever a writer panics while holding an exclusive lock. A
-    /// panic will only occur if the lock is acquired.
+    /// This function does not provide any guarantees with respect to the ordering
+    /// of whether contentious readers or writers will acquire the lock first.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock. An
+    /// error will only be returned if the lock would have otherwise been
+    /// acquired.
     #[inline]
-    pub fn try_read(&self) -> Option<RWLockReadGuard<T>> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn try_read(&self) -> TryLockResult<RwLockReadGuard<T>> {
         unsafe {
-            let lock: &'static StaticRWLock = &*(&*self.inner as *const _);
-            lock.try_read().map(|guard| {
-                RWLockReadGuard::new(self, guard)
-            })
+            if self.inner.try_read() {
+                Ok(RwLockReadGuard::new(self)?)
+            } else {
+                Err(TryLockError::WouldBlock)
+            }
         }
     }
 
-    /// Lock this rwlock with exclusive write access, blocking the current
+    /// Locks this rwlock with exclusive write access, blocking the current
     /// thread until it can be acquired.
     ///
     /// This function will not return while other writers or other readers
@@ -191,324 +183,444 @@ impl<T: Send + Sync> RWLock<T> {
     /// Returns an RAII guard which will drop the write access of this rwlock
     /// when dropped.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// This function will panic if the RWLock is poisoned. An RWLock is
-    /// poisoned whenever a writer panics while holding an exclusive lock. The
-    /// panic will occur when the lock is acquired.
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock.
+    /// An error will be returned when the lock is acquired.
     #[inline]
-    pub fn write(&self) -> RWLockWriteGuard<T> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn write(&self) -> LockResult<RwLockWriteGuard<T>> {
         unsafe {
-            let lock: &'static StaticRWLock = &*(&*self.inner as *const _);
-            RWLockWriteGuard::new(self, lock.write())
+            self.inner.write();
+            RwLockWriteGuard::new(self)
         }
     }
 
-    /// Attempt to lock this rwlock with exclusive write access.
+    /// Attempts to lock this rwlock with exclusive write access.
     ///
-    /// This function does not ever block, and it will return `None` if a call
-    /// to `write` would otherwise block. If successful, an RAII guard is
-    /// returned.
+    /// If the lock could not be acquired at this time, then `Err` is returned.
+    /// Otherwise, an RAII guard is returned which will release the lock when
+    /// it is dropped.
     ///
-    /// # Panics
+    /// This function does not block.
     ///
-    /// This function will panic if the RWLock is poisoned. An RWLock is
-    /// poisoned whenever a writer panics while holding an exclusive lock. A
-    /// panic will only occur if the lock is acquired.
+    /// This function does not provide any guarantees with respect to the ordering
+    /// of whether contentious readers or writers will acquire the lock first.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock. An
+    /// error will only be returned if the lock would have otherwise been
+    /// acquired.
     #[inline]
-    pub fn try_write(&self) -> Option<RWLockWriteGuard<T>> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn try_write(&self) -> TryLockResult<RwLockWriteGuard<T>> {
         unsafe {
-            let lock: &'static StaticRWLock = &*(&*self.inner as *const _);
-            lock.try_write().map(|guard| {
-                RWLockWriteGuard::new(self, guard)
-            })
-        }
-    }
-}
-
-#[unsafe_destructor]
-impl<T> Drop for RWLock<T> {
-    fn drop(&mut self) {
-        unsafe { self.inner.inner.destroy() }
-    }
-}
-
-impl StaticRWLock {
-    /// Locks this rwlock with shared read access, blocking the current thread
-    /// until it can be acquired.
-    ///
-    /// See `RWLock::read`.
-    #[inline]
-    pub fn read(&'static self) -> StaticRWLockReadGuard {
-        unsafe { self.inner.read() }
-        StaticRWLockReadGuard::new(self)
-    }
-
-    /// Attempt to acquire this lock with shared read access.
-    ///
-    /// See `RWLock::try_read`.
-    #[inline]
-    pub fn try_read(&'static self) -> Option<StaticRWLockReadGuard> {
-        if unsafe { self.inner.try_read() } {
-            Some(StaticRWLockReadGuard::new(self))
-        } else {
-            None
+            if self.inner.try_write() {
+                Ok(RwLockWriteGuard::new(self)?)
+            } else {
+                Err(TryLockError::WouldBlock)
+            }
         }
     }
 
-    /// Lock this rwlock with exclusive write access, blocking the current
-    /// thread until it can be acquired.
+    /// Determines whether the lock is poisoned.
     ///
-    /// See `RWLock::write`.
+    /// If another thread is active, the lock can still become poisoned at any
+    /// time.  You should not trust a `false` value for program correctness
+    /// without additional synchronization.
     #[inline]
-    pub fn write(&'static self) -> StaticRWLockWriteGuard {
-        unsafe { self.inner.write() }
-        StaticRWLockWriteGuard::new(self)
+    #[stable(feature = "sync_poison", since = "1.2.0")]
+    pub fn is_poisoned(&self) -> bool {
+        self.poison.get()
     }
 
-    /// Attempt to lock this rwlock with exclusive write access.
+    /// Consumes this `RwLock`, returning the underlying data.
     ///
-    /// See `RWLock::try_write`.
-    #[inline]
-    pub fn try_write(&'static self) -> Option<StaticRWLockWriteGuard> {
-        if unsafe { self.inner.try_write() } {
-            Some(StaticRWLockWriteGuard::new(self))
-        } else {
-            None
-        }
-    }
-
-    /// Deallocate all resources associated with this static lock.
+    /// # Errors
     ///
-    /// This method is unsafe to call as there is no guarantee that there are no
-    /// active users of the lock, and this also doesn't prevent any future users
-    /// of this lock. This method is required to be called to not leak memory on
-    /// all platforms.
-    pub unsafe fn destroy(&'static self) {
-        self.inner.destroy()
-    }
-}
-
-impl<'rwlock, T> RWLockReadGuard<'rwlock, T> {
-    fn new(lock: &RWLock<T>, guard: StaticRWLockReadGuard)
-           -> RWLockReadGuard<T> {
-        RWLockReadGuard { __lock: lock, __guard: guard }
-    }
-}
-impl<'rwlock, T> RWLockWriteGuard<'rwlock, T> {
-    fn new(lock: &RWLock<T>, guard: StaticRWLockWriteGuard)
-           -> RWLockWriteGuard<T> {
-        RWLockWriteGuard { __lock: lock, __guard: guard }
-    }
-}
-
-impl<'rwlock, T> Deref<T> for RWLockReadGuard<'rwlock, T> {
-    fn deref(&self) -> &T { unsafe { &*self.__lock.data.get() } }
-}
-impl<'rwlock, T> Deref<T> for RWLockWriteGuard<'rwlock, T> {
-    fn deref(&self) -> &T { unsafe { &*self.__lock.data.get() } }
-}
-impl<'rwlock, T> DerefMut<T> for RWLockWriteGuard<'rwlock, T> {
-    fn deref_mut(&mut self) -> &mut T { unsafe { &mut *self.__lock.data.get() } }
-}
-
-impl StaticRWLockReadGuard {
-    fn new(lock: &'static StaticRWLock) -> StaticRWLockReadGuard {
-        let guard = StaticRWLockReadGuard {
-            lock: &lock.inner,
-            marker: marker::NoSend,
-        };
-        unsafe { (*lock.poison.get()).borrow().check("rwlock"); }
-        return guard;
-    }
-}
-impl StaticRWLockWriteGuard {
-    fn new(lock: &'static StaticRWLock) -> StaticRWLockWriteGuard {
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock. An
+    /// error will only be returned if the lock would have otherwise been
+    /// acquired.
+    #[stable(feature = "rwlock_into_inner", since = "1.6.0")]
+    pub fn into_inner(self) -> LockResult<T> where T: Sized {
+        // We know statically that there are no outstanding references to
+        // `self` so there's no need to lock the inner lock.
+        //
+        // To get the inner value, we'd like to call `data.into_inner()`,
+        // but because `RwLock` impl-s `Drop`, we can't move out of it, so
+        // we'll have to destructure it manually instead.
         unsafe {
-            let guard = StaticRWLockWriteGuard {
-                lock: &lock.inner,
-                marker: marker::NoSend,
-                poison: (*lock.poison.get()).borrow(),
+            // Like `let RwLock { inner, poison, data } = self`.
+            let (inner, poison, data) = {
+                let RwLock { ref inner, ref poison, ref data } = self;
+                (ptr::read(inner), ptr::read(poison), ptr::read(data))
             };
-            guard.poison.check("rwlock");
-            return guard;
+            mem::forget(self);
+            inner.destroy();  // Keep in sync with the `Drop` impl.
+            drop(inner);
+
+            poison::map_result(poison.borrow(), |_| data.into_inner())
+        }
+    }
+
+    /// Returns a mutable reference to the underlying data.
+    ///
+    /// Since this call borrows the `RwLock` mutably, no actual locking needs to
+    /// take place---the mutable borrow statically guarantees no locks exist.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the RwLock is poisoned. An RwLock
+    /// is poisoned whenever a writer panics while holding an exclusive lock. An
+    /// error will only be returned if the lock would have otherwise been
+    /// acquired.
+    #[stable(feature = "rwlock_get_mut", since = "1.6.0")]
+    pub fn get_mut(&mut self) -> LockResult<&mut T> {
+        // We know statically that there are no other references to `self`, so
+        // there's no need to lock the inner lock.
+        let data = unsafe { &mut *self.data.get() };
+        poison::map_result(self.poison.borrow(), |_| data)
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: ?Sized> Drop for RwLock<T> {
+    #[unsafe_destructor_blind_to_params]
+    fn drop(&mut self) {
+        // IMPORTANT: This code needs to be kept in sync with `RwLock::into_inner`.
+        unsafe { self.inner.destroy() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.try_read() {
+            Ok(guard) => write!(f, "RwLock {{ data: {:?} }}", &*guard),
+            Err(TryLockError::Poisoned(err)) => {
+                write!(f, "RwLock {{ data: Poisoned({:?}) }}", &**err.get_ref())
+            },
+            Err(TryLockError::WouldBlock) => write!(f, "RwLock {{ <locked> }}")
         }
     }
 }
 
-#[unsafe_destructor]
-impl Drop for StaticRWLockReadGuard {
-    fn drop(&mut self) {
-        unsafe { self.lock.read_unlock(); }
+#[stable(feature = "rw_lock_default", since = "1.9.0")]
+impl<T: Default> Default for RwLock<T> {
+    fn default() -> RwLock<T> {
+        RwLock::new(Default::default())
     }
 }
 
-#[unsafe_destructor]
-impl Drop for StaticRWLockWriteGuard {
+impl<'rwlock, T: ?Sized> RwLockReadGuard<'rwlock, T> {
+    unsafe fn new(lock: &'rwlock RwLock<T>)
+                  -> LockResult<RwLockReadGuard<'rwlock, T>> {
+        poison::map_result(lock.poison.borrow(), |_| {
+            RwLockReadGuard {
+                __lock: lock,
+            }
+        })
+    }
+}
+
+impl<'rwlock, T: ?Sized> RwLockWriteGuard<'rwlock, T> {
+    unsafe fn new(lock: &'rwlock RwLock<T>)
+                  -> LockResult<RwLockWriteGuard<'rwlock, T>> {
+        poison::map_result(lock.poison.borrow(), |guard| {
+            RwLockWriteGuard {
+                __lock: lock,
+                __poison: guard,
+            }
+        })
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'rwlock, T: ?Sized> Deref for RwLockReadGuard<'rwlock, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.__lock.data.get() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'rwlock, T: ?Sized> Deref for RwLockWriteGuard<'rwlock, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.__lock.data.get() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'rwlock, T: ?Sized> DerefMut for RwLockWriteGuard<'rwlock, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.__lock.data.get() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
-        self.poison.done();
-        unsafe { self.lock.write_unlock(); }
+        unsafe { self.__lock.inner.read_unlock(); }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
+    fn drop(&mut self) {
+        self.__lock.poison.done(&self.__poison);
+        unsafe { self.__lock.inner.write_unlock(); }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use prelude::*;
+    #![allow(deprecated)] // rand
 
-    use rand::{mod, Rng};
-    use task;
-    use sync::{Arc, RWLock, StaticRWLock, RWLOCK_INIT};
+    use rand::{self, Rng};
+    use sync::mpsc::channel;
+    use thread;
+    use sync::{Arc, RwLock, TryLockError};
+    use sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Eq, PartialEq, Debug)]
+    struct NonCopy(i32);
 
     #[test]
     fn smoke() {
-        let l = RWLock::new(());
-        drop(l.read());
-        drop(l.write());
-        drop((l.read(), l.read()));
-        drop(l.write());
-    }
-
-    #[test]
-    fn static_smoke() {
-        static R: StaticRWLock = RWLOCK_INIT;
-        drop(R.read());
-        drop(R.write());
-        drop((R.read(), R.read()));
-        drop(R.write());
-        unsafe { R.destroy(); }
+        let l = RwLock::new(());
+        drop(l.read().unwrap());
+        drop(l.write().unwrap());
+        drop((l.read().unwrap(), l.read().unwrap()));
+        drop(l.write().unwrap());
     }
 
     #[test]
     fn frob() {
-        static R: StaticRWLock = RWLOCK_INIT;
-        static N: uint = 10;
-        static M: uint = 1000;
+        const N: usize = 10;
+        const M: usize = 1000;
+
+        let r = Arc::new(RwLock::new(()));
 
         let (tx, rx) = channel::<()>();
-        for _ in range(0, N) {
+        for _ in 0..N {
             let tx = tx.clone();
-            spawn(move|| {
-                let mut rng = rand::task_rng();
-                for _ in range(0, M) {
+            let r = r.clone();
+            thread::spawn(move || {
+                let mut rng = rand::thread_rng();
+                for _ in 0..M {
                     if rng.gen_weighted_bool(N) {
-                        drop(R.write());
+                        drop(r.write().unwrap());
                     } else {
-                        drop(R.read());
+                        drop(r.read().unwrap());
                     }
                 }
                 drop(tx);
             });
         }
         drop(tx);
-        let _ = rx.recv_opt();
-        unsafe { R.destroy(); }
+        let _ = rx.recv();
     }
 
     #[test]
-    #[should_fail]
     fn test_rw_arc_poison_wr() {
-        let arc = Arc::new(RWLock::new(1i));
+        let arc = Arc::new(RwLock::new(1));
         let arc2 = arc.clone();
-        let _ = task::try(move|| {
-            let lock = arc2.write();
-            assert_eq!(*lock, 2);
-        });
-        let lock = arc.read();
-        assert_eq!(*lock, 1);
+        let _: Result<(), _> = thread::spawn(move|| {
+            let _lock = arc2.write().unwrap();
+            panic!();
+        }).join();
+        assert!(arc.read().is_err());
     }
 
     #[test]
-    #[should_fail]
     fn test_rw_arc_poison_ww() {
-        let arc = Arc::new(RWLock::new(1i));
+        let arc = Arc::new(RwLock::new(1));
+        assert!(!arc.is_poisoned());
         let arc2 = arc.clone();
-        let _ = task::try(move|| {
-            let lock = arc2.write();
-            assert_eq!(*lock, 2);
-        });
-        let lock = arc.write();
-        assert_eq!(*lock, 1);
+        let _: Result<(), _> = thread::spawn(move|| {
+            let _lock = arc2.write().unwrap();
+            panic!();
+        }).join();
+        assert!(arc.write().is_err());
+        assert!(arc.is_poisoned());
     }
 
     #[test]
     fn test_rw_arc_no_poison_rr() {
-        let arc = Arc::new(RWLock::new(1i));
+        let arc = Arc::new(RwLock::new(1));
         let arc2 = arc.clone();
-        let _ = task::try(move|| {
-            let lock = arc2.read();
-            assert_eq!(*lock, 2);
-        });
-        let lock = arc.read();
+        let _: Result<(), _> = thread::spawn(move|| {
+            let _lock = arc2.read().unwrap();
+            panic!();
+        }).join();
+        let lock = arc.read().unwrap();
         assert_eq!(*lock, 1);
     }
     #[test]
     fn test_rw_arc_no_poison_rw() {
-        let arc = Arc::new(RWLock::new(1i));
+        let arc = Arc::new(RwLock::new(1));
         let arc2 = arc.clone();
-        let _ = task::try(move|| {
-            let lock = arc2.read();
-            assert_eq!(*lock, 2);
-        });
-        let lock = arc.write();
+        let _: Result<(), _> = thread::spawn(move|| {
+            let _lock = arc2.read().unwrap();
+            panic!()
+        }).join();
+        let lock = arc.write().unwrap();
         assert_eq!(*lock, 1);
     }
 
     #[test]
     fn test_rw_arc() {
-        let arc = Arc::new(RWLock::new(0i));
+        let arc = Arc::new(RwLock::new(0));
         let arc2 = arc.clone();
         let (tx, rx) = channel();
 
-        task::spawn(move|| {
-            let mut lock = arc2.write();
-            for _ in range(0u, 10) {
+        thread::spawn(move|| {
+            let mut lock = arc2.write().unwrap();
+            for _ in 0..10 {
                 let tmp = *lock;
                 *lock = -1;
-                task::deschedule();
+                thread::yield_now();
                 *lock = tmp + 1;
             }
-            tx.send(());
+            tx.send(()).unwrap();
         });
 
         // Readers try to catch the writer in the act
         let mut children = Vec::new();
-        for _ in range(0u, 5) {
+        for _ in 0..5 {
             let arc3 = arc.clone();
-            children.push(task::try_future(move|| {
-                let lock = arc3.read();
+            children.push(thread::spawn(move|| {
+                let lock = arc3.read().unwrap();
                 assert!(*lock >= 0);
             }));
         }
 
         // Wait for children to pass their asserts
-        for r in children.iter_mut() {
-            assert!(r.get_ref().is_ok());
+        for r in children {
+            assert!(r.join().is_ok());
         }
 
         // Wait for writer to finish
-        rx.recv();
-        let lock = arc.read();
+        rx.recv().unwrap();
+        let lock = arc.read().unwrap();
         assert_eq!(*lock, 10);
     }
 
     #[test]
     fn test_rw_arc_access_in_unwind() {
-        let arc = Arc::new(RWLock::new(1i));
+        let arc = Arc::new(RwLock::new(1));
         let arc2 = arc.clone();
-        let _ = task::try(move|| -> () {
+        let _ = thread::spawn(move|| -> () {
             struct Unwinder {
-                i: Arc<RWLock<int>>,
+                i: Arc<RwLock<isize>>,
             }
             impl Drop for Unwinder {
                 fn drop(&mut self) {
-                    let mut lock = self.i.write();
+                    let mut lock = self.i.write().unwrap();
                     *lock += 1;
                 }
             }
             let _u = Unwinder { i: arc2 };
             panic!();
-        });
-        let lock = arc.read();
+        }).join();
+        let lock = arc.read().unwrap();
         assert_eq!(*lock, 2);
+    }
+
+    #[test]
+    fn test_rwlock_unsized() {
+        let rw: &RwLock<[i32]> = &RwLock::new([1, 2, 3]);
+        {
+            let b = &mut *rw.write().unwrap();
+            b[0] = 4;
+            b[2] = 5;
+        }
+        let comp: &[i32] = &[4, 2, 5];
+        assert_eq!(&*rw.read().unwrap(), comp);
+    }
+
+    #[test]
+    fn test_rwlock_try_write() {
+        let lock = RwLock::new(0isize);
+        let read_guard = lock.read().unwrap();
+
+        let write_result = lock.try_write();
+        match write_result {
+            Err(TryLockError::WouldBlock) => (),
+            Ok(_) => assert!(false, "try_write should not succeed while read_guard is in scope"),
+            Err(_) => assert!(false, "unexpected error"),
+        }
+
+        drop(read_guard);
+    }
+
+    #[test]
+    fn test_into_inner() {
+        let m = RwLock::new(NonCopy(10));
+        assert_eq!(m.into_inner().unwrap(), NonCopy(10));
+    }
+
+    #[test]
+    fn test_into_inner_drop() {
+        struct Foo(Arc<AtomicUsize>);
+        impl Drop for Foo {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let num_drops = Arc::new(AtomicUsize::new(0));
+        let m = RwLock::new(Foo(num_drops.clone()));
+        assert_eq!(num_drops.load(Ordering::SeqCst), 0);
+        {
+            let _inner = m.into_inner().unwrap();
+            assert_eq!(num_drops.load(Ordering::SeqCst), 0);
+        }
+        assert_eq!(num_drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_into_inner_poison() {
+        let m = Arc::new(RwLock::new(NonCopy(10)));
+        let m2 = m.clone();
+        let _ = thread::spawn(move || {
+            let _lock = m2.write().unwrap();
+            panic!("test panic in inner thread to poison RwLock");
+        }).join();
+
+        assert!(m.is_poisoned());
+        match Arc::try_unwrap(m).unwrap().into_inner() {
+            Err(e) => assert_eq!(e.into_inner(), NonCopy(10)),
+            Ok(x) => panic!("into_inner of poisoned RwLock is Ok: {:?}", x),
+        }
+    }
+
+    #[test]
+    fn test_get_mut() {
+        let mut m = RwLock::new(NonCopy(10));
+        *m.get_mut().unwrap() = NonCopy(20);
+        assert_eq!(m.into_inner().unwrap(), NonCopy(20));
+    }
+
+    #[test]
+    fn test_get_mut_poison() {
+        let m = Arc::new(RwLock::new(NonCopy(10)));
+        let m2 = m.clone();
+        let _ = thread::spawn(move || {
+            let _lock = m2.write().unwrap();
+            panic!("test panic in inner thread to poison RwLock");
+        }).join();
+
+        assert!(m.is_poisoned());
+        match Arc::try_unwrap(m).unwrap().get_mut() {
+            Err(e) => assert_eq!(*e.into_inner(), NonCopy(10)),
+            Ok(x) => panic!("get_mut of poisoned RwLock is Ok: {:?}", x),
+        }
     }
 }

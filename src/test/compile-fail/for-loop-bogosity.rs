@@ -9,12 +9,12 @@
 // except according to those terms.
 
 struct MyStruct {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
 impl MyStruct {
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<isize> {
         Some(self.x)
     }
 }
@@ -24,7 +24,7 @@ pub fn main() {
         x: 1,
         y: 2,
     };
-    for x in bogus { //~ ERROR has type `MyStruct` which does not implement the `Iterator` trait
+    for x in bogus { //~ ERROR `MyStruct: std::iter::Iterator` is not satisfied
         drop(x);
     }
 }

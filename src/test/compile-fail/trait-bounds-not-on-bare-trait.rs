@@ -9,12 +9,13 @@
 // except according to those terms.
 
 trait Foo {
+    fn dummy(&self) { }
 }
 
 // This should emit the less confusing error, not the more confusing one.
 
 fn foo(_x: Foo + Send) {
-    //~^ERROR the trait `core::kinds::Sized` is not implemented
+    //~^ ERROR `Foo + Send + 'static: std::marker::Sized` is not satisfied
 }
 
 fn main() { }

@@ -8,8 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// error-pattern:attempted to divide by zero
+// ignore-pretty : (#23623) problems when  ending with // comments
+
+// error-pattern:attempt to divide by zero
+
 fn main() {
-    let y = 0i;
-    let _z = 1i / y;
+    let y = 0;
+    let _z = 1 / y;
 }

@@ -1,4 +1,4 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,27 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub use self::Os::*;
-pub use self::Abi::*;
-pub use self::Architecture::*;
-pub use self::AbiArchitecture::*;
-
 use std::fmt;
 
-#[deriving(PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
 pub enum Os {
-    OsWindows,
-    OsMacos,
-    OsLinux,
-    OsAndroid,
-    OsFreebsd,
-    OsiOS,
-    OsDragonfly,
+    Windows,
+    Macos,
+    Linux,
+    Android,
+    Freebsd,
+    iOS,
+    Dragonfly,
+    Bitrig,
+    Netbsd,
+    Openbsd,
+    NaCl,
+    Solaris,
 }
 
-impl Copy for Os {}
-
-#[deriving(PartialEq, Eq, Hash, Encodable, Decodable, Clone)]
+#[derive(PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Clone, Copy, Debug)]
 pub enum Abi {
     // NB: This ordering MUST match the AbiDatas array below.
     // (This is ensured by the test indices_are_correct().)
@@ -37,8 +36,10 @@ pub enum Abi {
     Cdecl,
     Stdcall,
     Fastcall,
+    Vectorcall,
     Aapcs,
     Win64,
+    SysV64,
 
     // Multiplatform ABIs second
     Rust,
@@ -46,12 +47,11 @@ pub enum Abi {
     System,
     RustIntrinsic,
     RustCall,
+    PlatformIntrinsic,
 }
 
-impl Copy for Abi {}
-
 #[allow(non_camel_case_types)]
-#[deriving(PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Architecture {
     X86,
     X86_64,
@@ -60,8 +60,7 @@ pub enum Architecture {
     Mipsel
 }
 
-impl Copy for Architecture {}
-
+#[derive(Copy, Clone)]
 pub struct AbiData {
     abi: Abi,
 
@@ -69,38 +68,37 @@ pub struct AbiData {
     name: &'static str,
 }
 
-impl Copy for AbiData {}
-
+#[derive(Copy, Clone)]
 pub enum AbiArchitecture {
     /// Not a real ABI (e.g., intrinsic)
-    RustArch,
+    Rust,
     /// An ABI that specifies cross-platform defaults (e.g., "C")
-    AllArch,
+    All,
     /// Multiple architectures (bitset)
     Archs(u32)
 }
 
 #[allow(non_upper_case_globals)]
-impl Copy for AbiArchitecture {}
-
-#[allow(non_upper_case_globals)]
-static AbiDatas: &'static [AbiData] = &[
+const AbiDatas: &'static [AbiData] = &[
     // Platform-specific ABIs
-    AbiData {abi: Cdecl, name: "cdecl" },
-    AbiData {abi: Stdcall, name: "stdcall" },
-    AbiData {abi: Fastcall, name:"fastcall" },
-    AbiData {abi: Aapcs, name: "aapcs" },
-    AbiData {abi: Win64, name: "win64" },
+    AbiData {abi: Abi::Cdecl, name: "cdecl" },
+    AbiData {abi: Abi::Stdcall, name: "stdcall" },
+    AbiData {abi: Abi::Fastcall, name: "fastcall" },
+    AbiData {abi: Abi::Vectorcall, name: "vectorcall"},
+    AbiData {abi: Abi::Aapcs, name: "aapcs" },
+    AbiData {abi: Abi::Win64, name: "win64" },
+    AbiData {abi: Abi::SysV64, name: "sysv64" },
 
     // Cross-platform ABIs
     //
     // NB: Do not adjust this ordering without
     // adjusting the indices below.
-    AbiData {abi: Rust, name: "Rust" },
-    AbiData {abi: C, name: "C" },
-    AbiData {abi: System, name: "system" },
-    AbiData {abi: RustIntrinsic, name: "rust-intrinsic" },
-    AbiData {abi: RustCall, name: "rust-call" },
+    AbiData {abi: Abi::Rust, name: "Rust" },
+    AbiData {abi: Abi::C, name: "C" },
+    AbiData {abi: Abi::System, name: "system" },
+    AbiData {abi: Abi::RustIntrinsic, name: "rust-intrinsic" },
+    AbiData {abi: Abi::RustCall, name: "rust-call" },
+    AbiData {abi: Abi::PlatformIntrinsic, name: "platform-intrinsic" }
 ];
 
 /// Returns the ABI with the given name (if any).
@@ -114,8 +112,8 @@ pub fn all_names() -> Vec<&'static str> {
 
 impl Abi {
     #[inline]
-    pub fn index(&self) -> uint {
-        *self as uint
+    pub fn index(&self) -> usize {
+        *self as usize
     }
 
     #[inline]
@@ -128,22 +126,27 @@ impl Abi {
     }
 }
 
-impl fmt::Show for Abi {
+impl fmt::Display for Abi {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "\"{}\"", self.name())
     }
 }
 
-impl fmt::Show for Os {
+impl fmt::Display for Os {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            OsLinux => "linux".fmt(f),
-            OsWindows => "windows".fmt(f),
-            OsMacos => "macos".fmt(f),
-            OsiOS => "ios".fmt(f),
-            OsAndroid => "android".fmt(f),
-            OsFreebsd => "freebsd".fmt(f),
-            OsDragonfly => "dragonfly".fmt(f)
+            Os::Linux => "linux".fmt(f),
+            Os::Windows => "windows".fmt(f),
+            Os::Macos => "macos".fmt(f),
+            Os::iOS => "ios".fmt(f),
+            Os::Android => "android".fmt(f),
+            Os::Freebsd => "freebsd".fmt(f),
+            Os::Dragonfly => "dragonfly".fmt(f),
+            Os::Bitrig => "bitrig".fmt(f),
+            Os::Netbsd => "netbsd".fmt(f),
+            Os::Openbsd => "openbsd".fmt(f),
+            Os::NaCl => "nacl".fmt(f),
+            Os::Solaris => "solaris".fmt(f),
         }
     }
 }

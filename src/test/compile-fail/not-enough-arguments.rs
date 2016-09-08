@@ -12,11 +12,13 @@
 // mismatch between the # of params, and not other
 // unrelated errors.
 
-fn foo(a: int, b: int, c: int, d:int) {
+fn foo(a: isize, b: isize, c: isize, d:isize) {
   panic!();
 }
 
 fn main() {
   foo(1, 2, 3);
   //~^ ERROR this function takes 4 parameters but 3
+  //~| NOTE the following parameter types were expected:
+  //~| NOTE isize, isize, isize, isize
 }

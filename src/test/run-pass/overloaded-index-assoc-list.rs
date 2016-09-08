@@ -11,12 +11,15 @@
 // Test overloading of the `[]` operator.  In particular test that it
 // takes its argument *by reference*.
 
+
+#![feature(core)]
+
 use std::ops::Index;
 
 struct AssociationList<K,V> {
     pairs: Vec<AssociationPair<K,V>> }
 
-#[deriving(Clone)]
+#[derive(Clone)]
 struct AssociationPair<K,V> {
     key: K,
     value: V
@@ -28,14 +31,16 @@ impl<K,V> AssociationList<K,V> {
     }
 }
 
-impl<K: PartialEq + std::fmt::Show, V:Clone> Index<K,V> for AssociationList<K,V> {
-    fn index<'a>(&'a self, index: &K) -> &'a V {
-        for pair in self.pairs.iter() {
+impl<'a, K: PartialEq + std::fmt::Debug, V:Clone> Index<&'a K> for AssociationList<K,V> {
+    type Output = V;
+
+    fn index(&self, index: &K) -> &V {
+        for pair in &self.pairs {
             if pair.key == *index {
                 return &pair.value
             }
         }
-        panic!("No value found for key: {}", index);
+        panic!("No value found for key: {:?}", index);
     }
 }
 
@@ -44,12 +49,12 @@ pub fn main() {
     let bar = "bar".to_string();
 
     let mut list = AssociationList {pairs: Vec::new()};
-    list.push(foo.clone(), 22i);
-    list.push(bar.clone(), 44i);
+    list.push(foo.clone(), 22);
+    list.push(bar.clone(), 44);
 
-    assert!(list[foo] == 22)
-    assert!(list[bar] == 44)
+    assert_eq!(list[&foo], 22);
+    assert_eq!(list[&bar], 44);
 
-    assert!(list[foo] == 22)
-    assert!(list[bar] == 44)
+    assert_eq!(list[&foo], 22);
+    assert_eq!(list[&bar], 44);
 }

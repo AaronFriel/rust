@@ -8,10 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(box_syntax)]
 
 fn main() {
     let f;
     let g;
     g = f;
-    f = box g; //~ ERROR cyclic type of infinite size
+    f = box g;
+    //~^  ERROR mismatched types
+    //~| expected type `_`
+    //~| found type `Box<_>`
+    //~| cyclic type of infinite size
 }

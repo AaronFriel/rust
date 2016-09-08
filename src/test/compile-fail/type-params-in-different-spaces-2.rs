@@ -11,22 +11,21 @@
 // Test static calls to make sure that we align the Self and input
 // type parameters on a trait correctly.
 
-trait Tr<T> {
+trait Tr<T> : Sized {
     fn op(T) -> Self;
 }
 
 trait A:    Tr<Self> {
     fn test<U>(u: U) -> Self {
-        Tr::op(u)   //~ ERROR not implemented
+        Tr::op(u)   //~ ERROR E0277
     }
 }
 
 trait B<T>: Tr<T> {
     fn test<U>(u: U) -> Self {
-        Tr::op(u)   //~ ERROR not implemented
+        Tr::op(u)   //~ ERROR E0277
     }
 }
 
 fn main() {
 }
-

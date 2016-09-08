@@ -8,14 +8,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+#![feature(core)]
+
+use std::ops::{Index, IndexMut};
+
 struct Foo {
-    x: int,
-    y: int,
+    x: isize,
+    y: isize,
 }
 
-impl Index<int,int> for Foo {
-    fn index(&self, z: &int) -> &int {
-        if *z == 0 {
+impl Index<isize> for Foo {
+    type Output = isize;
+
+    fn index(&self, z: isize) -> &isize {
+        if z == 0 {
             &self.x
         } else {
             &self.y
@@ -23,9 +30,9 @@ impl Index<int,int> for Foo {
     }
 }
 
-impl IndexMut<int,int> for Foo {
-    fn index_mut(&mut self, z: &int) -> &mut int {
-        if *z == 0 {
+impl IndexMut<isize> for Foo {
+    fn index_mut(&mut self, z: isize) -> &mut isize {
+        if z == 0 {
             &mut self.x
         } else {
             &mut self.y
@@ -34,14 +41,14 @@ impl IndexMut<int,int> for Foo {
 }
 
 trait Int {
-    fn get(self) -> int;
-    fn get_from_ref(&self) -> int;
+    fn get(self) -> isize;
+    fn get_from_ref(&self) -> isize;
     fn inc(&mut self);
 }
 
-impl Int for int {
-    fn get(self) -> int { self }
-    fn get_from_ref(&self) -> int { *self }
+impl Int for isize {
+    fn get(self) -> isize { self }
+    fn get_from_ref(&self) -> isize { *self }
     fn inc(&mut self) { *self += 1; }
 }
 
@@ -67,4 +74,3 @@ fn main() {
     assert_eq!(f[1].get(), 5);
     assert_eq!(f[1].get_from_ref(), 5);
 }
-

@@ -8,151 +8,151 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(missing_docs)]
-#![allow(non_camel_case_types)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_unsafe)]
-#![allow(unused_mut)]
+#![allow(missing_docs, bad_style)]
 
-extern crate libc;
+use io::{self, ErrorKind};
+use libc;
 
-use num;
-use num::{Int, SignedInt};
-use prelude::*;
-use io::{mod, IoResult, IoError};
-use sys_common::mkerr_libc;
+#[cfg(target_os = "android")]   pub use os::android as platform;
+#[cfg(target_os = "bitrig")]    pub use os::bitrig as platform;
+#[cfg(target_os = "dragonfly")] pub use os::dragonfly as platform;
+#[cfg(target_os = "freebsd")]   pub use os::freebsd as platform;
+#[cfg(target_os = "ios")]       pub use os::ios as platform;
+#[cfg(target_os = "linux")]     pub use os::linux as platform;
+#[cfg(target_os = "macos")]     pub use os::macos as platform;
+#[cfg(target_os = "nacl")]      pub use os::nacl as platform;
+#[cfg(target_os = "netbsd")]    pub use os::netbsd as platform;
+#[cfg(target_os = "openbsd")]   pub use os::openbsd as platform;
+#[cfg(target_os = "solaris")]   pub use os::solaris as platform;
+#[cfg(target_os = "emscripten")] pub use os::emscripten as platform;
 
-macro_rules! helper_init( (static $name:ident: Helper<$m:ty>) => (
-    static $name: Helper<$m> = Helper {
-        lock: ::sync::MUTEX_INIT,
-        cond: ::sync::CONDVAR_INIT,
-        chan: ::cell::UnsafeCell { value: 0 as *mut Sender<$m> },
-        signal: ::cell::UnsafeCell { value: 0 },
-        initialized: ::cell::UnsafeCell { value: false },
-        shutdown: ::cell::UnsafeCell { value: false },
-    };
-) )
+#[macro_use]
+pub mod weak;
 
-pub mod c;
-pub mod ext;
+pub mod android;
+#[cfg(any(not(cargobuild), feature = "backtrace"))]
+pub mod backtrace;
 pub mod condvar;
+pub mod ext;
+pub mod fd;
 pub mod fs;
-pub mod helper_signal;
 pub mod mutex;
+pub mod net;
 pub mod os;
+pub mod os_str;
 pub mod pipe;
 pub mod process;
+pub mod rand;
 pub mod rwlock;
-pub mod sync;
-pub mod tcp;
+pub mod stack_overflow;
+pub mod thread;
 pub mod thread_local;
-pub mod timer;
-pub mod tty;
-pub mod udp;
+pub mod time;
+pub mod stdio;
 
-pub mod addrinfo {
-    pub use sys_common::net::get_host_addresses;
+#[cfg(not(test))]
+pub fn init() {
+    use alloc::oom;
+
+    // By default, some platforms will send a *signal* when an EPIPE error
+    // would otherwise be delivered. This runtime doesn't install a SIGPIPE
+    // handler, causing it to kill the program, which isn't exactly what we
+    // want!
+    //
+    // Hence, we set SIGPIPE to ignore when the program starts up in order
+    // to prevent this problem.
+    unsafe {
+        reset_sigpipe();
+    }
+
+    oom::set_oom_handler(oom_handler);
+
+    // A nicer handler for out-of-memory situations than the default one. This
+    // one prints a message to stderr before aborting. It is critical that this
+    // code does not allocate any memory since we are in an OOM situation. Any
+    // errors are ignored while printing since there's nothing we can do about
+    // them and we are about to exit anyways.
+    fn oom_handler() -> ! {
+        use intrinsics;
+        let msg = "fatal runtime error: out of memory\n";
+        unsafe {
+            libc::write(libc::STDERR_FILENO,
+                        msg.as_ptr() as *const libc::c_void,
+                        msg.len() as libc::size_t);
+            intrinsics::abort();
+        }
+    }
+
+    #[cfg(not(any(target_os = "nacl", target_os = "emscripten")))]
+    unsafe fn reset_sigpipe() {
+        assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != !0);
+    }
+    #[cfg(any(target_os = "nacl", target_os = "emscripten"))]
+    unsafe fn reset_sigpipe() {}
 }
 
-// FIXME: move these to c module
-pub type sock_t = self::fs::fd_t;
-pub type wrlen = libc::size_t;
-pub type msglen_t = libc::size_t;
-pub unsafe fn close_sock(sock: sock_t) { let _ = libc::close(sock); }
+#[cfg(target_os = "android")]
+pub use sys::android::signal;
+#[cfg(not(target_os = "android"))]
+pub use libc::signal;
 
-pub fn last_error() -> IoError {
-    decode_error_detailed(os::errno() as i32)
-}
-
-pub fn last_net_error() -> IoError {
-    last_error()
-}
-
-extern "system" {
-    fn gai_strerror(errcode: libc::c_int) -> *const libc::c_char;
-}
-
-pub fn last_gai_error(s: libc::c_int) -> IoError {
-    use c_str::CString;
-
-    let mut err = decode_error(s);
-    err.detail = Some(unsafe {
-        CString::new(gai_strerror(s), false).as_str().unwrap().to_string()
-    });
-    err
-}
-
-/// Convert an `errno` value into a high-level error variant and description.
-pub fn decode_error(errno: i32) -> IoError {
-    // FIXME: this should probably be a bit more descriptive...
-    let (kind, desc) = match errno {
-        libc::EOF => (io::EndOfFile, "end of file"),
-        libc::ECONNREFUSED => (io::ConnectionRefused, "connection refused"),
-        libc::ECONNRESET => (io::ConnectionReset, "connection reset"),
-        libc::EPERM | libc::EACCES =>
-            (io::PermissionDenied, "permission denied"),
-        libc::EPIPE => (io::BrokenPipe, "broken pipe"),
-        libc::ENOTCONN => (io::NotConnected, "not connected"),
-        libc::ECONNABORTED => (io::ConnectionAborted, "connection aborted"),
-        libc::EADDRNOTAVAIL => (io::ConnectionRefused, "address not available"),
-        libc::EADDRINUSE => (io::ConnectionRefused, "address in use"),
-        libc::ENOENT => (io::FileNotFound, "no such file or directory"),
-        libc::EISDIR => (io::InvalidInput, "illegal operation on a directory"),
-        libc::ENOSYS => (io::IoUnavailable, "function not implemented"),
-        libc::EINVAL => (io::InvalidInput, "invalid argument"),
-        libc::ENOTTY =>
-            (io::MismatchedFileTypeForOperation,
-             "file descriptor is not a TTY"),
-        libc::ETIMEDOUT => (io::TimedOut, "operation timed out"),
-        libc::ECANCELED => (io::TimedOut, "operation aborted"),
+pub fn decode_error_kind(errno: i32) -> ErrorKind {
+    match errno as libc::c_int {
+        libc::ECONNREFUSED => ErrorKind::ConnectionRefused,
+        libc::ECONNRESET => ErrorKind::ConnectionReset,
+        libc::EPERM | libc::EACCES => ErrorKind::PermissionDenied,
+        libc::EPIPE => ErrorKind::BrokenPipe,
+        libc::ENOTCONN => ErrorKind::NotConnected,
+        libc::ECONNABORTED => ErrorKind::ConnectionAborted,
+        libc::EADDRNOTAVAIL => ErrorKind::AddrNotAvailable,
+        libc::EADDRINUSE => ErrorKind::AddrInUse,
+        libc::ENOENT => ErrorKind::NotFound,
+        libc::EINTR => ErrorKind::Interrupted,
+        libc::EINVAL => ErrorKind::InvalidInput,
+        libc::ETIMEDOUT => ErrorKind::TimedOut,
+        libc::EEXIST => ErrorKind::AlreadyExists,
 
         // These two constants can have the same value on some systems,
         // but different values on others, so we can't use a match
         // clause
         x if x == libc::EAGAIN || x == libc::EWOULDBLOCK =>
-            (io::ResourceUnavailable, "resource temporarily unavailable"),
+            ErrorKind::WouldBlock,
 
-        _ => (io::OtherIoError, "unknown error")
-    };
-    IoError { kind: kind, desc: desc, detail: None }
+        _ => ErrorKind::Other,
+    }
 }
 
-pub fn decode_error_detailed(errno: i32) -> IoError {
-    let mut err = decode_error(errno);
-    err.detail = Some(os::error_string(errno));
-    err
+#[doc(hidden)]
+pub trait IsMinusOne {
+    fn is_minus_one(&self) -> bool;
 }
 
-#[inline]
-pub fn retry<T, F> (mut f: F) -> T where
-    T: SignedInt,
-    F: FnMut() -> T,
+macro_rules! impl_is_minus_one {
+    ($($t:ident)*) => ($(impl IsMinusOne for $t {
+        fn is_minus_one(&self) -> bool {
+            *self == -1
+        }
+    })*)
+}
+
+impl_is_minus_one! { i8 i16 i32 i64 isize }
+
+pub fn cvt<T: IsMinusOne>(t: T) -> io::Result<T> {
+    if t.is_minus_one() {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
+}
+
+pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
+    where T: IsMinusOne,
+          F: FnMut() -> T
 {
-    let one: T = Int::one();
     loop {
-        let n = f();
-        if n == -one && os::errno() == libc::EINTR as int { }
-        else { return n }
+        match cvt(f()) {
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+            other => return other,
+        }
     }
 }
-
-pub fn ms_to_timeval(ms: u64) -> libc::timeval {
-    libc::timeval {
-        tv_sec: (ms / 1000) as libc::time_t,
-        tv_usec: ((ms % 1000) * 1000) as libc::suseconds_t,
-    }
-}
-
-pub fn wouldblock() -> bool {
-    let err = os::errno();
-    err == libc::EWOULDBLOCK as int || err == libc::EAGAIN as int
-}
-
-pub fn set_nonblocking(fd: sock_t, nb: bool) -> IoResult<()> {
-    let set = nb as libc::c_int;
-    mkerr_libc(retry(|| unsafe { c::ioctl(fd, c::FIONBIO, &set) }))
-}
-
-// nothing needed on unix platforms
-pub fn init_net() {}

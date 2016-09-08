@@ -12,17 +12,16 @@ trait ListItem<'a> {
     fn list_name() -> &'a str;
 }
 
-trait Collection { fn len(&self) -> uint; }
+trait Collection { fn len(&self) -> usize; }
 
 struct List<'a, T: ListItem<'a>> {
-//~^ ERROR the parameter type `T` may not live long enough
-//~^^ HELP consider adding an explicit lifetime bound
-//~^^^ NOTE ...so that the reference type `&'a [T]` does not outlive the data it points at
     slice: &'a [T]
+//~^ ERROR the parameter type `T` may not live long enough
+//~| HELP consider adding an explicit lifetime bound
+//~| NOTE ...so that the reference type `&'a [T]` does not outlive the data it points at
 }
-
 impl<'a, T: ListItem<'a>> Collection for List<'a, T> {
-    fn len(&self) -> uint {
+    fn len(&self) -> usize {
         0
     }
 }

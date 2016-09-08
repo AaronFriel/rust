@@ -5,16 +5,14 @@
 This document is the primary reference for the Rust programming language. It
 provides three kinds of material:
 
-  - Chapters that formally define the language grammar and, for each
-    construct, informally describe its semantics and give examples of its
-    use.
+  - Chapters that informally describe each language construct and their use.
   - Chapters that informally describe the memory model, concurrency model,
     runtime services, linkage model and debugging facilities.
   - Appendix chapters providing rationale and references to languages that
     influenced the design.
 
 This document does not serve as an introduction to the language. Background
-familiarity with the language is assumed. A separate [guide] is available to
+familiarity with the language is assumed. A separate [book] is available to
 help acquire such background familiarity.
 
 This document also does not serve as a reference to the [standard] library
@@ -23,64 +21,36 @@ separately by extracting documentation attributes from their source code. Many
 of the features that one might expect to be language features are library
 features in Rust, so what you're looking for may be there, not here.
 
-[guide]: guide.html
+You may also be interested in the [grammar].
+
+[book]: book/index.html
 [standard]: std/index.html
+[grammar]: grammar.html
 
 # Notation
 
-Rust's grammar is defined over Unicode codepoints, each conventionally denoted
-`U+XXXX`, for 4 or more hexadecimal digits `X`. _Most_ of Rust's grammar is
-confined to the ASCII range of Unicode, and is described in this document by a
-dialect of Extended Backus-Naur Form (EBNF), specifically a dialect of EBNF
-supported by common automated LL(k) parsing tools such as `llgen`, rather than
-the dialect given in ISO 14977. The dialect can be defined self-referentially
-as follows:
-
-```{.ebnf .notation}
-grammar : rule + ;
-rule    : nonterminal ':' productionrule ';' ;
-productionrule : production [ '|' production ] * ;
-production : term * ;
-term : element repeats ;
-element : LITERAL | IDENTIFIER | '[' productionrule ']' ;
-repeats : [ '*' | '+' ] NUMBER ? | NUMBER ? | '?' ;
-```
-
-Where:
-
-- Whitespace in the grammar is ignored.
-- Square brackets are used to group rules.
-- `LITERAL` is a single printable ASCII character, or an escaped hexadecimal
-  ASCII code of the form `\xQQ`, in single quotes, denoting the corresponding
-  Unicode codepoint `U+00QQ`.
-- `IDENTIFIER` is a nonempty string of ASCII letters and underscores.
-- The `repeat` forms apply to the adjacent `element`, and are as follows:
-  - `?` means zero or one repetition
-  - `*` means zero or more repetitions
-  - `+` means one or more repetitions
-  - NUMBER trailing a repeat symbol gives a maximum repetition count
-  - NUMBER on its own gives an exact repetition count
-
-This EBNF dialect should hopefully be familiar to many readers.
-
 ## Unicode productions
 
-A few productions in Rust's grammar permit Unicode codepoints outside the ASCII
-range. We define these productions in terms of character properties specified
-in the Unicode standard, rather than in terms of ASCII-range codepoints. The
-section [Special Unicode Productions](#special-unicode-productions) lists these
-productions.
+A few productions in Rust's grammar permit Unicode code points outside the
+ASCII range. We define these productions in terms of character properties
+specified in the Unicode standard, rather than in terms of ASCII-range code
+points. The grammar has a [Special Unicode Productions][unicodeproductions]
+section that lists these productions.
+
+[unicodeproductions]: grammar.html#special-unicode-productions
 
 ## String table productions
 
 Some rules in the grammar &mdash; notably [unary
 operators](#unary-operator-expressions), [binary
-operators](#binary-operator-expressions), and [keywords](#keywords) &mdash; are
+operators](#binary-operator-expressions), and [keywords][keywords] &mdash; are
 given in a simplified form: as a listing of a table of unquoted, printable
 whitespace-separated strings. These cases form a subset of the rules regarding
 the [token](#tokens) rule, and are assumed to be the result of a
 lexical-analysis phase feeding the parser, driven by a DFA, operating over the
 disjunction of all such string table entries.
+
+[keywords]: grammar.html#keywords
 
 When such a string enclosed in double-quotes (`"`) occurs inside the grammar,
 it is an implicit reference to a single member of such a string table
@@ -90,80 +60,74 @@ production. See [tokens](#tokens) for more information.
 
 ## Input format
 
-Rust input is interpreted as a sequence of Unicode codepoints encoded in UTF-8.
+Rust input is interpreted as a sequence of Unicode code points encoded in UTF-8.
 Most Rust grammar rules are defined in terms of printable ASCII-range
-codepoints, but a small number are defined in terms of Unicode properties or
-explicit codepoint lists. [^inputformat]
+code points, but a small number are defined in terms of Unicode properties or
+explicit code point lists. [^inputformat]
 
 [^inputformat]: Substitute definitions for the special Unicode productions are
   provided to the grammar verifier, restricted to ASCII range, when verifying the
   grammar in this document.
 
-## Special Unicode Productions
+## Identifiers
 
-The following productions in the Rust grammar are defined in terms of Unicode
-properties: `ident`, `non_null`, `non_star`, `non_eol`, `non_slash_or_star`,
-`non_single_quote` and `non_double_quote`.
+An identifier is any nonempty Unicode[^non_ascii_idents] string of the following form:
 
-### Identifiers
+[^non_ascii_idents]: Non-ASCII characters in identifiers are currently feature
+  gated. This is expected to improve soon.
 
-The `ident` production is any nonempty Unicode string of the following form:
+Either
 
-- The first character has property `XID_start`
-- The remaining characters have property `XID_continue`
+   * The first character has property `XID_start`
+   * The remaining characters have property `XID_continue`
 
-that does _not_ occur in the set of [keywords](#keywords).
+Or
+
+   * The first character is `_`
+   * The identifier is more than one character, `_` alone is not an identifier
+   * The remaining characters have property `XID_continue`
+
+that does _not_ occur in the set of [keywords][keywords].
 
 > **Note**: `XID_start` and `XID_continue` as character properties cover the
 > character ranges used to form the more familiar C and Java language-family
 > identifiers.
 
-### Delimiter-restricted productions
-
-Some productions are defined by exclusion of particular Unicode characters:
-
-- `non_null` is any single Unicode character aside from `U+0000` (null)
-- `non_eol` is `non_null` restricted to exclude `U+000A` (`'\n'`)
-- `non_star` is `non_null` restricted to exclude `U+002A` (`*`)
-- `non_slash_or_star` is `non_null` restricted to exclude `U+002F` (`/`) and `U+002A` (`*`)
-- `non_single_quote` is `non_null` restricted to exclude `U+0027`  (`'`)
-- `non_double_quote` is `non_null` restricted to exclude `U+0022` (`"`)
-
 ## Comments
 
-```{.ebnf .gram}
-comment : block_comment | line_comment ;
-block_comment : "/*" block_comment_body * "*/" ;
-block_comment_body : [block_comment | character] * ;
-line_comment : "//" non_eol * ;
-```
-
-Comments in Rust code follow the general C++ style of line and block-comment
-forms. Nested block comments are supported.
+Comments in Rust code follow the general C++ style of line (`//`) and
+block (`/* ... */`) comment forms. Nested block comments are supported.
 
 Line comments beginning with exactly _three_ slashes (`///`), and block
-comments beginning with exactly one repeated asterisk in the block-open
-sequence (`/**`), are interpreted as a special syntax for `doc`
+comments (`/** ... */`), are interpreted as a special syntax for `doc`
 [attributes](#attributes). That is, they are equivalent to writing
-`#[doc="..."]` around the body of the comment (this includes the comment
-characters themselves, ie `/// Foo` turns into `#[doc="/// Foo"]`).
+`#[doc="..."]` around the body of the comment, i.e., `/// Foo` turns into
+`#[doc="Foo"]`.
 
-`//!` comments apply to the parent of the comment, rather than the item that
-follows. `//!` comments are usually used to display information on the crate
-index page.
+Line comments beginning with `//!` and block comments `/*! ... */` are
+doc comments that apply to the parent of the comment, rather than the item
+that follows.  That is, they are equivalent to writing `#![doc="..."]` around
+the body of the comment. `//!` comments are usually used to document
+modules that occupy a source file.
 
 Non-doc comments are interpreted as a form of whitespace.
 
 ## Whitespace
 
-```{.ebnf .gram}
-whitespace_char : '\x20' | '\x09' | '\x0a' | '\x0d' ;
-whitespace : [ whitespace_char | comment ] + ;
-```
+Whitespace is any non-empty string containing only characters that have the
+`Pattern_White_Space` Unicode property, namely:
 
-The `whitespace_char` production is any nonempty Unicode string consisting of
-any of the following Unicode characters: `U+0020` (space, `' '`), `U+0009`
-(tab, `'\t'`), `U+000A` (LF, `'\n'`), `U+000D` (CR, `'\r'`).
+- `U+0009` (horizontal tab, `'\t'`)
+- `U+000A` (line feed, `'\n'`)
+- `U+000B` (vertical tab)
+- `U+000C` (form feed)
+- `U+000D` (carriage return, `'\r'`)
+- `U+0020` (space, `' '`)
+- `U+0085` (next line)
+- `U+200E` (left-to-right mark)
+- `U+200F` (right-to-left mark)
+- `U+2028` (line separator)
+- `U+2029` (paragraph separator)
 
 Rust is a "free-form" language, meaning that all forms of whitespace serve only
 to separate _tokens_ in the grammar, and have no semantic significance.
@@ -173,39 +137,10 @@ with any other legal whitespace element, such as a single space character.
 
 ## Tokens
 
-```{.ebnf .gram}
-simple_token : keyword | unop | binop ;
-token : simple_token | ident | literal | symbol | whitespace token ;
-```
-
 Tokens are primitive productions in the grammar defined by regular
 (non-recursive) languages. "Simple" tokens are given in [string table
 production](#string-table-productions) form, and occur in the rest of the
 grammar as double-quoted strings. Other tokens have exact rules given.
-
-### Keywords
-
-<p id="keyword-table-marker"></p>
-
-|          |          |          |          |         |
-|----------|----------|----------|----------|---------|
-| abstract | alignof  | as       | be       | box     |
-| break    | const    | continue | crate    | do      |
-| else     | enum     | extern   | false    | final   |
-| fn       | for      | if       | impl     | in      |
-| let      | loop     | match    | mod      | move    |
-| mut      | offsetof | once     | override | priv    |
-| pub      | pure     | ref      | return   | sizeof  |
-| static   | self     | struct   | super    | true    |
-| trait    | type     | typeof   | unsafe   | unsized |
-| use      | virtual  | where    | while    | yield   |
-
-
-Each of these keywords has special meaning in its grammar, and all of them are
-excluded from the `ident` rule.
-
-Note that some of these keywords are reserved, and do not currently do
-anything.
 
 ### Literals
 
@@ -214,28 +149,18 @@ of tokens, that immediately and directly denotes the value it evaluates to,
 rather than referring to it by name or some other evaluation rule. A literal is
 a form of constant expression, so is evaluated (primarily) at compile time.
 
-```{.ebnf .gram}
-lit_suffix : ident;
-literal : [ string_lit | char_lit | byte_string_lit | byte_lit | num_lit ] lit_suffix ?;
-```
-
-The optional suffix is only used for certain numeric literals, but is
-reserved for future extension, that is, the above gives the lexical
-grammar, but a Rust parser will reject everything but the 12 special
-cases mentioned in [Number literals](#number-literals) below.
-
 #### Examples
 
 ##### Characters and strings
 
-|   | Example | Number of `#` pairs allowed | Available characters | Escapes | Equivalent to |
-|---|---------|-----------------------------|----------------------|---------|---------------|
-| [Character](#character-literals) | `'H'` | `N/A` | All unicode | `\'` & [Byte escapes](#byte-escapes) & [Unicode escapes](#unicode-escapes) | `N/A` |
-| [String](#string-literals) | `"hello"` | `N/A` | All unicode | `\"` & [Byte escapes](#byte-escapes) & [Unicode escapes](#unicode-escapes) | `N/A` |
-| [Raw](#raw-string-literals) | `r##"hello"##`  | `0...` | All unicode | `N/A` | `N/A` |
-| [Byte](#byte-literals) | `b'H'` | `N/A` | All ASCII | `\'` & [Byte escapes](#byte-escapes) | `u8` |
-| [Byte string](#byte-string-literals) | `b"hello"` | `N/A`  | All ASCII | `\"` & [Byte escapes](#byte-escapes) | `&'static [u8]` |
-| [Raw byte string](#raw-byte-string-literals) | `br##"hello"##` | `0...` | All ASCII | `N/A` | `&'static [u8]` (unsure...not stated) |
+|                                              | Example         | `#` sets   | Characters  | Escapes             |
+|----------------------------------------------|-----------------|------------|-------------|---------------------|
+| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [Raw](#raw-string-literals)                  | `r#"hello"#`    | `0...`     | All Unicode | `N/A`                                                      |
+| [Byte](#byte-literals)                       | `b'H'`          | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
+| [Byte string](#byte-string-literals)         | `b"hello"`      | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
+| [Raw byte string](#raw-byte-string-literals) | `br#"hello"#`   | `0...`     | All ASCII   | `N/A`                                                      |
 
 ##### Byte escapes
 
@@ -246,70 +171,63 @@ cases mentioned in [Number literals](#number-literals) below.
 | `\r` | Carriage return |
 | `\t` | Tab |
 | `\\` | Backslash |
+| `\0` | Null |
 
 ##### Unicode escapes
 |   | Name |
 |---|------|
-| `\u7FFF` | 16-bit character code (exactly 4 digits) |
-| `\U7EEEFFFF` | 32-bit character code (exactly 8 digits) |
+| `\u{7FFF}` | 24-bit Unicode character code (up to 6 digits) |
+
+##### Quote escapes
+|   | Name |
+|---|------|
+| `\'` | Single quote |
+| `\"` | Double quote |
 
 ##### Numbers
 
 | [Number literals](#number-literals)`*` | Example | Exponentiation | Suffixes |
 |----------------------------------------|---------|----------------|----------|
-| Decimal integer | `98_222i` | `N/A` | Integer suffixes |
-| Hex integer | `0xffi` | `N/A` | Integer suffixes |
-| Octal integer | `0o77i` | `N/A` | Integer suffixes |
-| Binary integer | `0b1111_0000i` | `N/A` | Integer suffixes |
-| Floating-point | `123.0E+77f64` | `Optional` | Floating-point suffixes |
+| Decimal integer | `98_222` | `N/A` | Integer suffixes |
+| Hex integer | `0xff` | `N/A` | Integer suffixes |
+| Octal integer | `0o77` | `N/A` | Integer suffixes |
+| Binary integer | `0b1111_0000` | `N/A` | Integer suffixes |
+| Floating-point | `123.0E+77` | `Optional` | Floating-point suffixes |
 
 `*` All number literals allow `_` as a visual separator: `1_234.0E+18f64`
 
 ##### Suffixes
 | Integer | Floating-point |
 |---------|----------------|
-| `i` (`int`), `u` (`uint`), `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64` | `f32`, `f64` |
+| `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `isize`, `usize` | `f32`, `f64` |
 
 #### Character and string literals
-
-```{.ebnf .gram}
-char_lit : '\x27' char_body '\x27' ;
-string_lit : '"' string_body * '"' | 'r' raw_string ;
-
-char_body : non_single_quote
-          | '\x5c' [ '\x27' | common_escape | unicode_escape ] ;
-
-string_body : non_double_quote
-            | '\x5c' [ '\x22' | common_escape | unicode_escape ] ;
-raw_string : '"' raw_string_body '"' | '#' raw_string '#' ;
-
-common_escape : '\x5c'
-              | 'n' | 'r' | 't' | '0'
-              | 'x' hex_digit 2
-unicode_escape : 'u' hex_digit 4
-               | 'U' hex_digit 8 ;
-
-hex_digit : 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
-          | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
-          | dec_digit ;
-oct_digit : '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' ;
-dec_digit : '0' | nonzero_dec ;
-nonzero_dec: '1' | '2' | '3' | '4'
-           | '5' | '6' | '7' | '8' | '9' ;
-```
 
 ##### Character literals
 
 A _character literal_ is a single Unicode character enclosed within two
 `U+0027` (single-quote) characters, with the exception of `U+0027` itself,
-which must be _escaped_ by a preceding U+005C character (`\`).
+which must be _escaped_ by a preceding `U+005C` character (`\`).
 
 ##### String literals
 
 A _string literal_ is a sequence of any Unicode characters enclosed within two
 `U+0022` (double-quote) characters, with the exception of `U+0022` itself,
-which must be _escaped_ by a preceding `U+005C` character (`\`), or a _raw
-string literal_.
+which must be _escaped_ by a preceding `U+005C` character (`\`).
+
+Line-break characters are allowed in string literals. Normally they represent
+themselves (i.e. no translation), but as a special exception, when an unescaped
+`U+005C` character (`\`) occurs immediately before the newline (`U+000A`), the
+`U+005C` character, the newline, and all whitespace at the beginning of the
+next line are ignored. Thus `a` and `b` are equal:
+
+```rust
+let a = "foobar";
+let b = "foo\
+         bar";
+
+assert_eq!(a,b);
+```
 
 ##### Character escapes
 
@@ -317,18 +235,17 @@ Some additional _escapes_ are available in either character or non-raw string
 literals. An escape starts with a `U+005C` (`\`) and continues with one of the
 following forms:
 
-* An _8-bit codepoint escape_ escape starts with `U+0078` (`x`) and is
-  followed by exactly two _hex digits_. It denotes the Unicode codepoint
+* An _8-bit code point escape_ starts with `U+0078` (`x`) and is
+  followed by exactly two _hex digits_. It denotes the Unicode code point
   equal to the provided hex value.
-* A _16-bit codepoint escape_ starts with `U+0075` (`u`) and is followed
-  by exactly four _hex digits_. It denotes the Unicode codepoint equal to
-  the provided hex value.
-* A _32-bit codepoint escape_ starts with `U+0055` (`U`) and is followed
-  by exactly eight _hex digits_. It denotes the Unicode codepoint equal to
-  the provided hex value.
+* A _24-bit code point escape_ starts with `U+0075` (`u`) and is followed
+  by up to six _hex digits_ surrounded by braces `U+007B` (`{`) and `U+007D`
+  (`}`). It denotes the Unicode code point equal to the provided hex value.
 * A _whitespace escape_ is one of the characters `U+006E` (`n`), `U+0072`
-  (`r`), or `U+0074` (`t`), denoting the unicode values `U+000A` (LF),
+  (`r`), or `U+0074` (`t`), denoting the Unicode values `U+000A` (LF),
   `U+000D` (CR) or `U+0009` (HT) respectively.
+* The _null escape_ is the character `U+0030` (`0`) and denotes the Unicode
+  value `U+0000` (NUL).
 * The _backslash escape_ is the character `U+005C` (`\`) which must be
   escaped in order to denote *itself*.
 
@@ -336,11 +253,10 @@ following forms:
 
 Raw string literals do not process any escapes. They start with the character
 `U+0072` (`r`), followed by zero or more of the character `U+0023` (`#`) and a
-`U+0022` (double-quote) character. The _raw string body_ is not defined in the
-EBNF grammar above: it can contain any sequence of Unicode characters and is
-terminated only by another `U+0022` (double-quote) character, followed by the
-same number of `U+0023` (`#`) characters that preceded the opening `U+0022`
-(double-quote) character.
+`U+0022` (double-quote) character. The _raw string body_ can contain any sequence
+of Unicode characters and is terminated only by another `U+0022` (double-quote)
+character, followed by the same number of `U+0023` (`#`) characters that preceded
+the opening `U+0022` (double-quote) character.
 
 All Unicode characters contained in the raw string body represent themselves,
 the characters `U+0022` (double-quote) (except when followed by at least as
@@ -362,45 +278,37 @@ r##"foo #"# bar"##;                // foo #"# bar
 
 #### Byte and byte string literals
 
-```{.ebnf .gram}
-byte_lit : "b\x27" byte_body '\x27' ;
-byte_string_lit : "b\x22" string_body * '\x22' | "br" raw_byte_string ;
-
-byte_body : ascii_non_single_quote
-          | '\x5c' [ '\x27' | common_escape ] ;
-
-byte_string_body : ascii_non_double_quote
-            | '\x5c' [ '\x22' | common_escape ] ;
-raw_byte_string : '"' raw_byte_string_body '"' | '#' raw_byte_string '#' ;
-
-```
-
 ##### Byte literals
 
 A _byte literal_ is a single ASCII character (in the `U+0000` to `U+007F`
-range) enclosed within two `U+0027` (single-quote) characters, with the
-exception of `U+0027` itself, which must be _escaped_ by a preceding U+005C
-character (`\`), or a single _escape_. It is equivalent to a `u8` unsigned
-8-bit integer _number literal_.
+range) or a single _escape_ preceded by the characters `U+0062` (`b`) and
+`U+0027` (single-quote), and followed by the character `U+0027`. If the character
+`U+0027` is present within the literal, it must be _escaped_ by a preceding
+`U+005C` (`\`) character. It is equivalent to a `u8` unsigned 8-bit integer
+_number literal_.
 
 ##### Byte string literals
 
-A _byte string literal_ is a sequence of ASCII characters and _escapes_
-enclosed within two `U+0022` (double-quote) characters, with the exception of
-`U+0022` itself, which must be _escaped_ by a preceding `U+005C` character
-(`\`), or a _raw byte string literal_. It is equivalent to a `&'static [u8]`
-borrowed array of unsigned 8-bit integers.
+A non-raw _byte string literal_ is a sequence of ASCII characters and _escapes_,
+preceded by the characters `U+0062` (`b`) and `U+0022` (double-quote), and
+followed by the character `U+0022`. If the character `U+0022` is present within
+the literal, it must be _escaped_ by a preceding `U+005C` (`\`) character.
+Alternatively, a byte string literal can be a _raw byte string literal_, defined
+below. A byte string literal of length `n` is equivalent to a `&'static [u8; n]` borrowed fixed-sized array
+of unsigned 8-bit integers.
 
 Some additional _escapes_ are available in either byte or non-raw byte string
 literals. An escape starts with a `U+005C` (`\`) and continues with one of the
 following forms:
 
-* An _byte escape_ escape starts with `U+0078` (`x`) and is
+* A _byte escape_ escape starts with `U+0078` (`x`) and is
   followed by exactly two _hex digits_. It denotes the byte
   equal to the provided hex value.
 * A _whitespace escape_ is one of the characters `U+006E` (`n`), `U+0072`
   (`r`), or `U+0074` (`t`), denoting the bytes values `0x0A` (ASCII LF),
   `0x0D` (ASCII CR) or `0x09` (ASCII HT) respectively.
+* The _null escape_ is the character `U+0030` (`0`) and denotes the byte
+  value `0x00` (ASCII NUL).
 * The _backslash escape_ is the character `U+005C` (`\`) which must be
   escaped in order to denote its ASCII encoding `0x5C`.
 
@@ -409,11 +317,10 @@ following forms:
 Raw byte string literals do not process any escapes. They start with the
 character `U+0062` (`b`), followed by `U+0072` (`r`), followed by zero or more
 of the character `U+0023` (`#`), and a `U+0022` (double-quote) character. The
-_raw string body_ is not defined in the EBNF grammar above: it can contain any
-sequence of ASCII characters and is terminated only by another `U+0022`
-(double-quote) character, followed by the same number of `U+0023` (`#`)
-characters that preceded the opening `U+0022` (double-quote) character. A raw
-byte string literal can not contain any non-ASCII byte.
+_raw string body_ can contain any sequence of ASCII characters and is terminated
+only by another `U+0022` (double-quote) character, followed by the same number of
+`U+0023` (`#`) characters that preceded the opening `U+0022` (double-quote)
+character. A raw byte string literal can not contain any non-ASCII byte.
 
 All characters contained in the raw string body represent their ASCII encoding,
 the characters `U+0022` (double-quote) (except when followed by at least as
@@ -435,19 +342,6 @@ b"\\x52"; br"\x52";                  // \x52
 
 #### Number literals
 
-```{.ebnf .gram}
-num_lit : nonzero_dec [ dec_digit | '_' ] * float_suffix ?
-        | '0' [       [ dec_digit | '_' ] * float_suffix ?
-              | 'b'   [ '1' | '0' | '_' ] +
-              | 'o'   [ oct_digit | '_' ] +
-              | 'x'   [ hex_digit | '_' ] +  ] ;
-
-float_suffix : [ exponent | '.' dec_lit exponent ? ] ? ;
-
-exponent : ['E' | 'e'] ['-' | '+' ] ? dec_lit ;
-dec_lit : [ dec_digit | '_' ] + ;
-```
-
 A _number literal_ is either an _integer literal_ or a _floating-point
 literal_. The grammar for recognizing the two kinds of literals is mixed.
 
@@ -466,30 +360,36 @@ An _integer literal_ has one of four forms:
 
 Like any literal, an integer literal may be followed (immediately,
 without any spaces) by an _integer suffix_, which forcibly sets the
-type of the literal. There are 10 valid values for an integer suffix:
+type of the literal. The integer suffix must be the name of one of the
+integral types: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`,
+`isize`, or `usize`.
 
-* The `i` and `u` suffixes give the literal type `int` or `uint`,
-  respectively.
-* Each of the signed and unsigned machine types `u8`, `i8`,
-  `u16`, `i16`, `u32`, `i32`, `u64` and `i64`
-  give the literal the corresponding machine type.
+The type of an _unsuffixed_ integer literal is determined by type inference:
 
-The type of an _unsuffixed_ integer literal is determined by type inference.
-If an integer type can be _uniquely_ determined from the surrounding program
-context, the unsuffixed integer literal has that type. If the program context
-underconstrains the type, it is considered a static type error; if the program
-context overconstrains the type, it is also considered a static type error.
+* If an integer type can be _uniquely_ determined from the surrounding
+  program context, the unsuffixed integer literal has that type.
+
+* If the program context under-constrains the type, it defaults to the
+  signed 32-bit integer `i32`.
+
+* If the program context over-constrains the type, it is considered a
+  static type error.
 
 Examples of integer literals of various forms:
 
 ```
-123i;                              // type int
-123u;                              // type uint
-123_u;                             // type uint
+123i32;                            // type i32
+123u32;                            // type u32
+123_u32;                           // type u32
 0xff_u8;                           // type u8
 0o70_i16;                          // type i16
 0b1111_1111_1001_0000_i32;         // type i32
+0usize;                            // type usize
 ```
+
+Note that the Rust syntax considers `-1i8` as an application of the [unary minus
+operator](#unary-operator-expressions) to an integer literal `1i8`, rather than
+a single integer literal.
 
 ##### Floating-point literals
 
@@ -499,10 +399,23 @@ A _floating-point literal_ has one of two forms:
   optionally followed by another decimal literal, with an optional _exponent_.
 * A single _decimal literal_ followed by an _exponent_.
 
-By default, a floating-point literal has a generic type, and, like integer
-literals, the type must be uniquely determined from the context. There are two valid
+Like integer literals, a floating-point literal may be followed by a
+suffix, so long as the pre-suffix part does not end with `U+002E` (`.`).
+The suffix forcibly sets the type of the literal. There are two valid
 _floating-point suffixes_, `f32` and `f64` (the 32-bit and 64-bit floating point
 types), which explicitly determine the type of the literal.
+
+The type of an _unsuffixed_ floating-point literal is determined by
+type inference:
+
+* If a floating-point type can be _uniquely_ determined from the
+  surrounding program context, the unsuffixed floating-point literal
+  has that type.
+
+* If the program context under-constrains the type, it defaults to `f64`.
+
+* If the program context over-constrains the type, it is considered a
+  static type error.
 
 Examples of floating-point literals of various forms:
 
@@ -518,40 +431,30 @@ This last example is different because it is not possible to use the suffix
 syntax with a floating point literal ending in a period. `2.f64` would attempt
 to call a method named `f64` on `2`.
 
-##### Boolean literals
+The representation semantics of floating-point numbers are described in
+["Machine Types"](#machine-types).
+
+#### Boolean literals
 
 The two values of the boolean type are written `true` and `false`.
 
 ### Symbols
 
-```{.ebnf .gram}
-symbol : "::" | "->"
-       | '#' | '[' | ']' | '(' | ')' | '{' | '}'
-       | ',' | ';' ;
-```
-
-Symbols are a general class of printable [token](#tokens) that play structural
-roles in a variety of grammar productions. They are catalogued here for
-completeness as the set of remaining miscellaneous printable tokens that do not
+Symbols are a general class of printable [tokens](#tokens) that play structural
+roles in a variety of grammar productions. They are a
+set of remaining miscellaneous printable tokens that do not
 otherwise appear as [unary operators](#unary-operator-expressions), [binary
-operators](#binary-operator-expressions), or [keywords](#keywords).
+operators](#binary-operator-expressions), or [keywords][keywords].
+They are catalogued in [the Symbols section][symbols] of the Grammar document.
+
+[symbols]: grammar.html#symbols
 
 
 ## Paths
 
-```{.ebnf .gram}
-expr_path : [ "::" ] ident [ "::" expr_path_tail ] + ;
-expr_path_tail : '<' type_expr [ ',' type_expr ] + '>'
-               | expr_path ;
-
-type_path : ident [ type_path_tail ] + ;
-type_path_tail : '<' type_expr [ ',' type_expr ] + '>'
-               | "::" type_path ;
-```
-
 A _path_ is a sequence of one or more path components _logically_ separated by
 a namespace qualifier (`::`). If a path consists of only one component, it may
-refer to either an [item](#items) or a [slot](#memory-slots) in a local control
+refer to either an [item](#items) or a [variable](#variables) in a local control
 scope. If a path has multiple components, it refers to an item.
 
 Every item has a _canonical path_ within its crate, but the path naming an item
@@ -565,21 +468,21 @@ x;
 x::y::z;
 ```
 
-Path components are usually [identifiers](#identifiers), but the trailing
-component of a path may be an angle-bracket-enclosed list of type arguments. In
-[expression](#expressions) context, the type argument list is given after a
-final (`::`) namespace qualifier in order to disambiguate it from a relational
-expression involving the less-than symbol (`<`). In type expression context,
-the final namespace qualifier is omitted.
+Path components are usually [identifiers](#identifiers), but they may
+also include angle-bracket-enclosed lists of type arguments. In
+[expression](#expressions) context, the type argument list is given
+after a `::` namespace qualifier in order to disambiguate it from a
+relational expression involving the less-than symbol (`<`). In type
+expression context, the final namespace qualifier is omitted.
 
 Two examples of paths with type arguments:
 
 ```
-# struct HashMap<K, V>;
+# struct HashMap<K, V>(K,V);
 # fn f() {
 # fn id<T>(t: T) -> T { t }
-type T = HashMap<int,String>;  // Type arguments used in a type expression
-let x = id::<int>(10);       // Type arguments used in a call expression
+type T = HashMap<i32,String>; // Type arguments used in a type expression
+let x  = id::<i32>(10);       // Type arguments used in a call expression
 # }
 ```
 
@@ -603,7 +506,7 @@ mod b {
 ```
 
 * Paths starting with the keyword `super` begin resolution relative to the
-  parent module. Each further identifier must resolve to an item
+  parent module. Each further identifier must resolve to an item.
 
 ```rust
 mod a {
@@ -628,49 +531,47 @@ fn bar() {
 # fn main() {}
 ```
 
+Additionally keyword `super` may be repeated several times after the first
+`super` or `self` to refer to ancestor modules.
+
+```rust
+mod a {
+    fn foo() {}
+
+    mod b {
+        mod c {
+            fn foo() {
+                super::super::foo(); // call a's foo function
+                self::super::super::foo(); // call a's foo function
+            }
+        }
+    }
+}
+# fn main() {}
+```
+
 # Syntax extensions
 
 A number of minor features of Rust are not central enough to have their own
 syntax, and yet are not implementable as functions. Instead, they are given
-names, and invoked through a consistent syntax: `name!(...)`. Examples include:
-
-* `format!` : format data into a string
-* `env!` : look up an environment variable's value at compile time
-* `file!`: return the path to the file being compiled
-* `stringify!` : pretty-print the Rust expression given as an argument
-* `include!` : include the Rust expression in the given file
-* `include_str!` : include the contents of the given file as a string
-* `include_bin!` : include the contents of the given file as a binary blob
-* `error!`, `warn!`, `info!`, `debug!` : provide diagnostic information.
-
-All of the above extensions are expressions with values.
+names, and invoked through a consistent syntax: `some_extension!(...)`.
 
 Users of `rustc` can define new syntax extensions in two ways:
 
-* [Compiler plugins](guide-plugin.html#syntax-extensions) can include arbitrary
-  Rust code that manipulates syntax trees at compile time.
+* [Compiler plugins][plugin] can include arbitrary Rust code that
+  manipulates syntax trees at compile time. Note that the interface
+  for compiler plugins is considered highly unstable.
 
-* [Macros](guide-macros.html) define new syntax in a higher-level,
+* [Macros](book/macros.html) define new syntax in a higher-level,
   declarative way.
 
 ## Macros
 
-```{.ebnf .gram}
-expr_macro_rules : "macro_rules" '!' ident '(' macro_rule * ')' ;
-macro_rule : '(' matcher * ')' "=>" '(' transcriber * ')' ';' ;
-matcher : '(' matcher * ')' | '[' matcher * ']'
-        | '{' matcher * '}' | '$' ident ':' ident
-        | '$' '(' matcher * ')' sep_token? [ '*' | '+' ]
-        | non_special_token ;
-transcriber : '(' transcriber * ')' | '[' transcriber * ']'
-            | '{' transcriber * '}' | '$' ident
-            | '$' '(' transcriber * ')' sep_token? [ '*' | '+' ]
-            | non_special_token ;
-```
+`macro_rules` allows users to define syntax extension in a declarative way.  We
+call such extensions "macros by example" or simply "macros" — to be distinguished
+from the "procedural macros" defined in [compiler plugins][plugin].
 
-User-defined syntax extensions are called "macros", and the `macro_rules`
-syntax extension defines them. Currently, user-defined macros can expand to
-expressions, statements, items, or patterns.
+Currently, macros can expand to expressions, statements, items, or patterns.
 
 (A `sep_token` is any token other than `*` and `+`. A `non_special_token` is
 any token other than a delimiter or `$`.)
@@ -687,16 +588,27 @@ a `$` literally, including delimiters. For parsing reasons, delimiters must be
 balanced, but they are otherwise not special.
 
 In the matcher, `$` _name_ `:` _designator_ matches the nonterminal in the Rust
-syntax named by _designator_. Valid designators are `item`, `block`, `stmt`,
-`pat`, `expr`, `ty` (type), `ident`, `path`, `matchers` (lhs of the `=>` in
-macro rules), `tt` (rhs of the `=>` in macro rules). In the transcriber, the
-designator is already known, and so only the name of a matched nonterminal
-comes after the dollar sign.
+syntax named by _designator_. Valid designators are:
+
+* `item`: an [item](#items)
+* `block`: a [block](#block-expressions)
+* `stmt`: a [statement](#statements)
+* `pat`: a [pattern](#match-expressions)
+* `expr`: an [expression](#expressions)
+* `ty`: a [type](#types)
+* `ident`: an [identifier](#identifiers)
+* `path`: a [path](#paths)
+* `tt`: either side of the `=>` in macro rules
+* `meta`: the contents of an [attribute](#attributes)
+
+In the transcriber, the
+designator is already known, and so only the name of a matched nonterminal comes
+after the dollar sign.
 
 In both the matcher and transcriber, the Kleene star-like operator indicates
-repetition. The Kleene star operator consists of `$` and parens, optionally
+repetition. The Kleene star operator consists of `$` and parentheses, optionally
 followed by a separator token, followed by `*` or `+`. `*` means zero or more
-repetitions, `+` means at least one repetition. The parens are not matched or
+repetitions, `+` means at least one repetition. The parentheses are not matched or
 transcribed. On the matcher side, a name is bound to _all_ of the names it
 matches, in a structure that mimics the structure of the repetition encountered
 on a successful match. The job of the transcriber is to sort that structure
@@ -713,7 +625,7 @@ _name_ s that occur in its body. At the "current layer", they all must repeat
 the same number of times, so ` ( $( $i:ident ),* ; $( $j:ident ),* ) => ( $(
 ($i,$j) ),* )` is valid if given the argument `(a,b,c ; d,e,f)`, but not
 `(a,b,c ; d,e)`. The repetition walks through the choices at that layer in
-lockstep, so the former input transcribes to `( (a,d), (b,e), (c,f) )`.
+lockstep, so the former input transcribes to `(a,d), (b,e), (c,f)`.
 
 Nested repetitions are allowed.
 
@@ -722,35 +634,41 @@ Nested repetitions are allowed.
 The parser used by the macro system is reasonably powerful, but the parsing of
 Rust syntax is restricted in two ways:
 
-1. The parser will always parse as much as possible. If it attempts to match
-   `$i:expr [ , ]` against `8 [ , ]`, it will attempt to parse `i` as an array
-   index operation and fail. Adding a separator can solve this problem.
+1. Macro definitions are required to include suitable separators after parsing
+   expressions and other bits of the Rust grammar. This implies that
+   a macro definition like `$i:expr [ , ]` is not legal, because `[` could be part
+   of an expression. A macro definition like `$i:expr,` or `$i:expr;` would be legal,
+   however, because `,` and `;` are legal separators. See [RFC 550] for more information.
 2. The parser must have eliminated all ambiguity by the time it reaches a `$`
    _name_ `:` _designator_. This requirement most often affects name-designator
    pairs when they occur at the beginning of, or immediately after, a `$(...)*`;
    requiring a distinctive token in front can solve the problem.
 
-## Syntax extensions useful for the macro author
-
-* `log_syntax!` : print out the arguments at compile time
-* `trace_macros!` : supply `true` or `false` to enable or disable macro expansion logging
-* `stringify!` : turn the identifier argument into a string literal
-* `concat!` : concatenates a comma-separated list of literals
-* `concat_idents!` : create a new identifier by concatenating the arguments
+[RFC 550]: https://github.com/rust-lang/rfcs/blob/master/text/0550-macro-future-proofing.md
 
 # Crates and source files
 
-Rust is a *compiled* language. Its semantics obey a *phase distinction*
-between compile-time and run-time. Those semantic rules that have a *static
-interpretation* govern the success or failure of compilation. We refer to
-these rules as "static semantics". Semantic rules called "dynamic semantics"
-govern the behavior of programs at run-time. A program that fails to compile
-due to violation of a compile-time rule has no defined dynamic semantics; the
-compiler should halt with an error report, and produce no executable artifact.
+Although Rust, like any other language, can be implemented by an interpreter as
+well as a compiler, the only existing implementation is a compiler,
+and the language has
+always been designed to be compiled. For these reasons, this section assumes a
+compiler.
+
+Rust's semantics obey a *phase distinction* between compile-time and
+run-time.[^phase-distinction] Semantic rules that have a *static
+interpretation* govern the success or failure of compilation, while
+semantic rules
+that have a *dynamic interpretation* govern the behavior of the program at
+run-time.
+
+[^phase-distinction]: This distinction would also exist in an interpreter.
+    Static checks like syntactic analysis, type checking, and lints should
+    happen before the program is executed regardless of when it is executed.
 
 The compilation model centers on artifacts called _crates_. Each compilation
 processes a single crate in source form, and if successful, produces a single
-crate in binary form: either an executable or a library.[^cratesourcefile]
+crate in binary form: either an executable or some sort of
+library.[^cratesourcefile]
 
 [^cratesourcefile]: A crate is somewhat analogous to an *assembly* in the
     ECMA-335 CLI model, a *library* in the SML/NJ Compilation Manager, a *unit*
@@ -771,28 +689,31 @@ extension `.rs`.
 A Rust source file describes a module, the name and location of which &mdash;
 in the module tree of the current crate &mdash; are defined from outside the
 source file: either by an explicit `mod_item` in a referencing source file, or
-by the name of the crate itself.
+by the name of the crate itself. Every source file is a module, but not every
+module needs its own source file: [module definitions](#modules) can be nested
+within one file.
 
 Each source file contains a sequence of zero or more `item` definitions, and
-may optionally begin with any number of `attributes` that apply to the
-containing module. Attributes on the anonymous crate module define important
-metadata that influences the behavior of the compiler.
+may optionally begin with any number of [attributes](#items-and-attributes)
+that apply to the containing module, most of which influence the behavior of
+the compiler. The anonymous crate module can have additional attributes that
+apply to the crate as a whole.
 
-```{.rust}
-# #![allow(unused_attribute)]
-// Crate name
+```no_run
+// Specify the crate name.
 #![crate_name = "projx"]
 
-// Specify the output type
+// Specify the type of output artifact.
 #![crate_type = "lib"]
 
-// Turn on a warning
+// Turn on a warning.
+// This can be done in any module, not just the anonymous crate module.
 #![warn(non_camel_case_types)]
 ```
 
 A crate that contains a `main` function can be compiled to an executable. If a
-`main` function is present, its return type must be [`unit`](#primitive-types)
-and it must take no arguments.
+`main` function is present, its return type must be `()`
+("[unit](#tuple-types)") and it must take no arguments.
 
 # Items and attributes
 
@@ -801,14 +722,8 @@ Crates contain [items](#items), each of which may have some number of
 
 ## Items
 
-```{.ebnf .gram}
-item : mod_item | fn_item | type_item | struct_item | enum_item
-     | static_item | trait_item | impl_item | extern_block ;
-```
-
-An _item_ is a component of a crate; some module items can be defined in crate
-files, but most are defined in source files. Items are organized within a crate
-by a nested set of [modules](#modules). Every crate has a single "outermost"
+An _item_ is a component of a crate. Items are organized within a crate by a
+nested set of [modules](#modules). Every crate has a single "outermost"
 anonymous module; all further items within the crate have [paths](#paths)
 within the module tree of the crate.
 
@@ -817,11 +732,14 @@ execution, and may reside in read-only memory.
 
 There are several kinds of item:
 
+* [`extern crate` declarations](#extern-crate-declarations)
+* [`use` declarations](#use-declarations)
 * [modules](#modules)
 * [functions](#functions)
-* [type definitions](#type-definitions)
-* [structures](#structures)
+* [type definitions](grammar.html#type-definitions)
+* [structs](#structs)
 * [enumerations](#enumerations)
+* [constant items](#constant-items)
 * [static items](#static-items)
 * [traits](#traits)
 * [implementations](#implementations)
@@ -838,28 +756,21 @@ which sub-item declarations may appear.
 
 ### Type Parameters
 
-All items except modules may be *parameterized* by type. Type parameters are
-given as a comma-separated list of identifiers enclosed in angle brackets
-(`<...>`), after the name of the item and before its definition. The type
-parameters of an item are considered "part of the name", not part of the type
-of the item. A referencing [path](#paths) must (in principle) provide type
-arguments as a list of comma-separated types enclosed within angle brackets, in
-order to refer to the type-parameterized item. In practice, the type-inference
-system can usually infer such argument types from context. There are no
-general type-parametric types, only type-parametric items. That is, Rust has
-no notion of type abstraction: there are no first-class "forall" types.
+All items except modules, constants and statics may be *parameterized* by type.
+Type parameters are given as a comma-separated list of identifiers enclosed in
+angle brackets (`<...>`), after the name of the item and before its definition.
+The type parameters of an item are considered "part of the name", not part of
+the type of the item. A referencing [path](#paths) must (in principle) provide
+type arguments as a list of comma-separated types enclosed within angle
+brackets, in order to refer to the type-parameterized item. In practice, the
+type-inference system can usually infer such argument types from context. There
+are no general type-parametric types, only type-parametric items. That is, Rust
+has no notion of type abstraction: there are no higher-ranked (or "forall") types
+abstracted over other types, though higher-ranked types do exist for lifetimes.
 
 ### Modules
 
-```{.ebnf .gram}
-mod_item : "mod" ident ( ';' | '{' mod '}' );
-mod : [ view_item | item ] * ;
-```
-
-A module is a container for zero or more [view items](#view-items) and zero or
-more [items](#items). The view items manage the visibility of the items defined
-within the module, as well as the visibility of names from outside the module
-when referenced from inside the module.
+A module is a container for zero or more [items](#items).
 
 A _module item_ is a module, surrounded in braces, named, and prefixed with the
 keyword `mod`. A module item introduces a new, named module into the tree of
@@ -899,8 +810,9 @@ mirrors the module hierarchy.
 // Load the `vec` module from `vec.rs`
 mod vec;
 
-mod task {
-    // Load the `local_data` module from `task/local_data.rs`
+mod thread {
+    // Load the `local_data` module from `thread/local_data.rs`
+    // or `thread/local_data/mod.rs`.
     mod local_data;
 }
 ```
@@ -909,33 +821,15 @@ The directories and files used for loading external file modules can be
 influenced with the `path` attribute.
 
 ```{.ignore}
-#[path = "task_files"]
-mod task {
-    // Load the `local_data` module from `task_files/tls.rs`
+#[path = "thread_files"]
+mod thread {
+    // Load the `local_data` module from `thread_files/tls.rs`
     #[path = "tls.rs"]
     mod local_data;
 }
 ```
 
-#### View items
-
-```{.ebnf .gram}
-view_item : extern_crate_decl | use_decl ;
-```
-
-A view item manages the namespace of a module. View items do not define new
-items, but rather, simply change other items' visibility. There are two
-kinds of view items:
-
-* [`extern crate` declarations](#extern-crate-declarations)
-* [`use` declarations](#use-declarations)
-
-##### Extern crate declarations
-
-```{.ebnf .gram}
-extern_crate_decl : "extern" "crate" crate_name
-crate_name: ident | ( string_lit as ident )
-```
+#### Extern crate declarations
 
 An _`extern crate` declaration_ specifies a dependency on an external crate.
 The external crate is then bound into the declaring scope as the `ident`
@@ -944,11 +838,10 @@ provided in the `extern_crate_decl`.
 The external crate is resolved to a specific `soname` at compile time, and a
 runtime linkage requirement to that `soname` is passed to the linker for
 loading at runtime. The `soname` is resolved at compile time by scanning the
-compiler's library path and matching the optional `crateid` provided as a
-string literal against the `crateid` attributes that were declared on the
-external crate when it was compiled. If no `crateid` is provided, a default
-`name` attribute is assumed, equal to the `ident` given in the
-`extern_crate_decl`.
+compiler's library path and matching the optional `crateid` provided against
+the `crateid` attributes that were declared on the external crate when it was
+compiled. If no `crateid` is provided, a default `name` attribute is assumed,
+equal to the `ident` given in the `extern_crate_decl`.
 
 Three examples of `extern crate` declarations:
 
@@ -957,26 +850,29 @@ extern crate pcre;
 
 extern crate std; // equivalent to: extern crate std as std;
 
-extern crate "std" as ruststd; // linking to 'std' under another name
+extern crate std as ruststd; // linking to 'std' under another name
 ```
 
-##### Use declarations
+When naming Rust crates, hyphens are disallowed. However, Cargo packages may
+make use of them. In such case, when `Cargo.toml` doesn't specify a crate name,
+Cargo will transparently replace `-` with `_` (Refer to [RFC 940] for more
+details).
 
-```{.ebnf .gram}
-use_decl : "pub" ? "use" [ path "as" ident
-                          | path_glob ] ;
+Here is an example:
 
-path_glob : ident [ "::" [ path_glob
-                          | '*' ] ] ?
-          | '{' path_item [ ',' path_item ] * '}' ;
-
-path_item : ident | "mod" ;
+```{.ignore}
+// Importing the Cargo package hello-world
+extern crate hello_world; // hyphen replaced with an underscore
 ```
+
+[RFC 940]: https://github.com/rust-lang/rfcs/blob/master/text/0940-hyphens-considered-harmful.md
+
+#### Use declarations
 
 A _use declaration_ creates one or more local name bindings synonymous with
 some other [path](#paths). Usually a `use` declaration is used to shorten the
-path required to refer to a module item. These declarations may appear at the
-top of [modules](#modules) and [blocks](#blocks).
+path required to refer to a module item. These declarations may appear in
+[modules](#modules) and [blocks](grammar.html#block-expressions), usually at the top.
 
 > **Note**: Unlike in many languages,
 > `use` declarations in Rust do *not* declare linkage dependency with external crates.
@@ -984,29 +880,25 @@ top of [modules](#modules) and [blocks](#blocks).
 
 Use declarations support a number of convenient shortcuts:
 
-* Rebinding the target name as a new local name, using the syntax `use p::q::r as x;`.
+* Rebinding the target name as a new local name, using the syntax `use p::q::r as x;`
 * Simultaneously binding a list of paths differing only in their final element,
   using the glob-like brace syntax `use a::b::{c,d,e,f};`
 * Binding all paths matching a given prefix, using the asterisk wildcard syntax
   `use a::b::*;`
 * Simultaneously binding a list of paths differing only in their final element
-  and their immediate parent module, using the `mod` keyword, such as
-  `use a::b::{mod, c, d};`
+  and their immediate parent module, using the `self` keyword, such as
+  `use a::b::{self, c, d};`
 
 An example of `use` declarations:
 
-```
-use std::iter::range_step;
+```rust
 use std::option::Option::{Some, None};
-use std::collections::hash_map::{mod, HashMap};
+use std::collections::hash_map::{self, HashMap};
 
 fn foo<T>(_: T){}
-fn bar(map1: HashMap<String, uint>, map2: hash_map::HashMap<String, uint>){}
+fn bar(map1: HashMap<String, usize>, map2: hash_map::HashMap<String, usize>){}
 
 fn main() {
-    // Equivalent to 'std::iter::range_step(0u, 10u, 2u);'
-    range_step(0u, 10u, 2u);
-
     // Equivalent to 'foo(vec![std::option::Option::Some(1.0f64),
     // std::option::Option::None]);'
     foo(vec![Some(1.0f64), None]);
@@ -1050,21 +942,23 @@ module declarations should be at the crate root if direct usage of the declared
 modules within `use` items is desired. It is also possible to use `self` and
 `super` at the beginning of a `use` item to refer to the current and direct
 parent modules respectively. All rules regarding accessing declared modules in
-`use` declarations applies to both module declarations and `extern crate`
+`use` declarations apply to both module declarations and `extern crate`
 declarations.
 
 An example of what will and will not work for `use` items:
 
 ```
 # #![allow(unused_imports)]
-use foo::core::iter;  // good: foo is at the root of the crate
 use foo::baz::foobaz;    // good: foo is at the root of the crate
 
 mod foo {
-    extern crate core;
 
-    use foo::core::iter; // good: foo is at crate root
-//  use core::iter;      // bad:  native is not at the crate root
+    mod example {
+        pub mod iter {}
+    }
+
+    use foo::example::iter; // good: foo is at crate root
+//  use example::iter;      // bad:  example is not at the crate root
     use self::baz::foobaz;  // good: self refers to module 'foo'
     use foo::bar::foobar;   // good: foo is at crate root
 
@@ -1083,14 +977,15 @@ fn main() {}
 
 ### Functions
 
-A _function item_ defines a sequence of [statements](#statements) and an
-optional final [expression](#expressions), along with a name and a set of
-parameters. Functions are declared with the keyword `fn`. Functions declare a
-set of *input* [*slots*](#memory-slots) as parameters, through which the caller
-passes arguments into the function, and an *output* [*slot*](#memory-slots)
-through which the function passes results back to the caller.
+A _function item_ defines a sequence of [statements](#statements) and a
+final [expression](#expressions), along with a name and a set of
+parameters. Other than a name, all these are optional.
+Functions are declared with the keyword `fn`. Functions may declare a
+set of *input* [*variables*](#variables) as parameters, through which the caller
+passes arguments into the function, and the *output* [*type*](#types)
+of the value the function will return to its caller on completion.
 
-A function may also be copied into a first class *value*, in which case the
+A function may also be copied into a first-class *value*, in which case the
 value has the corresponding [*function type*](#function-types), and can be used
 otherwise exactly as a function item (with a minor additional cost of calling
 the function indirectly).
@@ -1103,8 +998,8 @@ interpreted as an implicit `return` expression applied to the final-expression.
 An example of a function:
 
 ```
-fn add(x: int, y: int) -> int {
-    return x + y;
+fn add(x: i32, y: i32) -> i32 {
+    x + y
 }
 ```
 
@@ -1112,141 +1007,56 @@ As with `let` bindings, function arguments are irrefutable patterns, so any
 pattern that is valid in a let binding is also valid as an argument.
 
 ```
-fn first((value, _): (int, int)) -> int { value }
+fn first((value, _): (i32, i32)) -> i32 { value }
 ```
 
 
 #### Generic functions
 
 A _generic function_ allows one or more _parameterized types_ to appear in its
-signature. Each type parameter must be explicitly declared, in an
-angle-bracket-enclosed, comma-separated list following the function name.
+signature. Each type parameter must be explicitly declared in an
+angle-bracket-enclosed and comma-separated list, following the function name.
 
-```{.ignore}
-fn iter<T>(seq: &[T], f: |T|) {
-    for elt in seq.iter() { f(elt); }
-}
-fn map<T, U>(seq: &[T], f: |T| -> U) -> Vec<U> {
-    let mut acc = vec![];
-    for elt in seq.iter() { acc.push(f(elt)); }
-    acc
-}
+```rust,ignore
+// foo is generic over A and B
+
+fn foo<A, B>(x: A, y: B) {
 ```
 
 Inside the function signature and body, the name of the type parameter can be
-used as a type name.
+used as a type name. [Trait](#traits) bounds can be specified for type parameters
+to allow methods with that trait to be called on values of that type. This is
+specified using the `where` syntax:
+
+```rust,ignore
+fn foo<T>(x: T) where T: Debug {
+```
 
 When a generic function is referenced, its type is instantiated based on the
-context of the reference. For example, calling the `iter` function defined
-above on `[1, 2]` will instantiate type parameter `T` with `int`, and require
-the closure parameter to have type `fn(int)`.
+context of the reference. For example, calling the `foo` function here:
+
+```
+use std::fmt::Debug;
+
+fn foo<T>(x: &[T]) where T: Debug {
+    // details elided
+    # ()
+}
+
+foo(&[1, 2]);
+```
+
+will instantiate type parameter `T` with `i32`.
 
 The type parameters can also be explicitly supplied in a trailing
 [path](#paths) component after the function name. This might be necessary if
 there is not sufficient context to determine the type parameters. For example,
 `mem::size_of::<u32>() == 4`.
 
-Since a parameter type is opaque to the generic function, the set of operations
-that can be performed on it is limited. Values of parameter type can only be
-moved, not copied.
-
-```
-fn id<T>(x: T) -> T { x }
-```
-
-Similarly, [trait](#traits) bounds can be specified for type parameters to
-allow methods with that trait to be called on values of that type.
-
-#### Unsafety
-
-Unsafe operations are those that potentially violate the memory-safety
-guarantees of Rust's static semantics.
-
-The following language level features cannot be used in the safe subset of
-Rust:
-
-- Dereferencing a [raw pointer](#pointer-types).
-- Reading or writing a [mutable static variable](#mutable-statics).
-- Calling an unsafe function (including an intrinsic or foreign function).
-
-##### Unsafe functions
-
-Unsafe functions are functions that are not safe in all contexts and/or for all
-possible inputs. Such a function must be prefixed with the keyword `unsafe` and
-can only be called from an `unsafe` block or another `unsafe` function.
-
-##### Unsafe blocks
-
-A block of code can be prefixed with the `unsafe` keyword, to permit calling
-`unsafe` functions or dereferencing raw pointers within a safe function.
-
-When a programmer has sufficient conviction that a sequence of potentially
-unsafe operations is actually safe, they can encapsulate that sequence (taken
-as a whole) within an `unsafe` block. The compiler will consider uses of such
-code safe, in the surrounding context.
-
-Unsafe blocks are used to wrap foreign libraries, make direct use of hardware
-or implement features not directly present in the language. For example, Rust
-provides the language features necessary to implement memory-safe concurrency
-in the language but the implementation of tasks and message passing is in the
-standard library.
-
-Rust's type system is a conservative approximation of the dynamic safety
-requirements, so in some cases there is a performance cost to using safe code.
-For example, a doubly-linked list is not a tree structure and can only be
-represented with reference-counted pointers in safe code. By using `unsafe`
-blocks to represent the reverse links as raw pointers, it can be implemented
-with only boxes.
-
-##### Behavior considered undefined
-
-The following is a list of behavior which is forbidden in all Rust code,
-including within `unsafe` blocks and `unsafe` functions. Type checking provides
-the guarantee that these issues are never caused by safe code.
-
-* Data races
-* Dereferencing a null/dangling raw pointer
-* Mutating an immutable value/reference without `UnsafeCell`
-* Reads of [undef](http://llvm.org/docs/LangRef.html#undefined-values)
-  (uninitialized) memory
-* Breaking the [pointer aliasing
-  rules](http://llvm.org/docs/LangRef.html#pointer-aliasing-rules)
-  with raw pointers (a subset of the rules used by C)
-* Invoking undefined behavior via compiler intrinsics:
-  * Indexing outside of the bounds of an object with `std::ptr::offset`
-    (`offset` intrinsic), with
-    the exception of one byte past the end which is permitted.
-  * Using `std::ptr::copy_nonoverlapping_memory` (`memcpy32`/`memcpy64`
-    instrinsics) on overlapping buffers
-* Invalid values in primitive types, even in private fields/locals:
-  * Dangling/null references or boxes
-  * A value other than `false` (0) or `true` (1) in a `bool`
-  * A discriminant in an `enum` not included in the type definition
-  * A value in a `char` which is a surrogate or above `char::MAX`
-  * non-UTF-8 byte sequences in a `str`
-* Unwinding into Rust from foreign code or unwinding from Rust into foreign
-  code. Rust's failure system is not compatible with exception handling in
-  other languages. Unwinding must be caught and handled at FFI boundaries.
-
-##### Behaviour not considered unsafe
-
-This is a list of behaviour not considered *unsafe* in Rust terms, but that may
-be undesired.
-
-* Deadlocks
-* Reading data from private fields (`std::repr`)
-* Leaks due to reference count cycles, even in the global heap
-* Exiting without calling destructors
-* Sending signals
-* Accessing/modifying the file system
-* Unsigned integer overflow (well-defined as wrapping)
-* Signed integer overflow (well-defined as two's complement representation
-  wrapping)
-
 #### Diverging functions
 
 A special kind of function can be declared with a `!` character where the
-output slot type would normally be. For example:
+output type would normally be. For example:
 
 ```
 fn my_err(s: &str) -> ! {
@@ -1258,9 +1068,7 @@ fn my_err(s: &str) -> ! {
 We call such functions "diverging" because they never return a value to the
 caller. Every control path in a diverging function must end with a `panic!()` or
 a call to another diverging function on every control path. The `!` annotation
-does *not* denote a type. Rather, the result type of a diverging function is a
-special type called $\bot$ ("bottom") that unifies with any type. Rust has no
-syntax for $\bot$.
+does *not* denote a type.
 
 It might be necessary to declare a diverging function because as mentioned
 previously, the typechecker checks that every control path in a function ends
@@ -1271,18 +1079,18 @@ typecheck:
 ```
 # fn my_err(s: &str) -> ! { panic!() }
 
-fn f(i: int) -> int {
-   if i == 42 {
-     return 42;
-   }
-   else {
-     my_err("Bad number!");
-   }
+fn f(i: i32) -> i32 {
+    if i == 42 {
+        return 42;
+    }
+    else {
+        my_err("Bad number!");
+    }
 }
 ```
 
 This will not compile without the `!` annotation on `my_err`, since the `else`
-branch of the conditional in `f` does not return an `int`, as required by the
+branch of the conditional in `f` does not return an `i32`, as required by the
 signature of `f`. Adding the `!` annotation to `my_err` informs the
 typechecker that, should control ever enter `my_err`, no further type judgments
 about `f` need to hold, since control will never resume in any context that
@@ -1300,18 +1108,18 @@ modifier.
 
 ```
 // Declares an extern fn, the ABI defaults to "C"
-extern fn new_int() -> int { 0 }
+extern fn new_i32() -> i32 { 0 }
 
 // Declares an extern fn with "stdcall" ABI
-extern "stdcall" fn new_int_stdcall() -> int { 0 }
+extern "stdcall" fn new_i32_stdcall() -> i32 { 0 }
 ```
 
-Unlike normal functions, extern fns have an `extern "ABI" fn()`. This is the
+Unlike normal functions, extern fns have type `extern "ABI" fn()`. This is the
 same type as the functions declared in an extern block.
 
 ```
-# extern fn new_int() -> int { 0 }
-let fptr: extern "C" fn() -> int = new_int;
+# extern fn new_i32() -> i32 { 0 }
+let fptr: extern "C" fn() -> i32 = new_i32;
 ```
 
 Extern functions may be called directly from Rust code as Rust uses large,
@@ -1321,57 +1129,67 @@ contiguous stack segments like C.
 
 A _type alias_ defines a new name for an existing [type](#types). Type
 aliases are declared with the keyword `type`. Every value has a single,
-specific type; the type-specified aspects of a value include:
+specific type, but may implement several different traits, or be compatible with
+several different type constraints.
 
-* Whether the value is composed of sub-values or is indivisible.
-* Whether the value represents textual or numerical information.
-* Whether the value represents integral or floating-point information.
-* The sequence of memory operations required to access the value.
-* The [kind](#type-kinds) of the type.
-
-For example, the type `(u8, u8)` defines the set of immutable values that are
-composite pairs, each containing two unsigned 8-bit integers accessed by
-pattern-matching and laid out in memory with the `x` component preceding the
-`y` component:
+For example, the following defines the type `Point` as a synonym for the type
+`(u8, u8)`, the type of pairs of unsigned 8 bit integers:
 
 ```
 type Point = (u8, u8);
 let p: Point = (41, 68);
 ```
 
-### Structures
+Currently a type alias to an enum type cannot be used to qualify the
+constructors:
 
-A _structure_ is a nominal [structure type](#structure-types) defined with the
+```
+enum E { A }
+type F = E;
+let _: F = E::A;  // OK
+// let _: F = F::A;  // Doesn't work
+```
+
+### Structs
+
+A _struct_ is a nominal [struct type](#struct-types) defined with the
 keyword `struct`.
 
 An example of a `struct` item and its use:
 
 ```
-struct Point {x: int, y: int}
+struct Point {x: i32, y: i32}
 let p = Point {x: 10, y: 11};
-let px: int = p.x;
+let px: i32 = p.x;
 ```
 
-A _tuple structure_ is a nominal [tuple type](#tuple-types), also defined with
+A _tuple struct_ is a nominal [tuple type](#tuple-types), also defined with
 the keyword `struct`. For example:
 
 ```
-struct Point(int, int);
+struct Point(i32, i32);
 let p = Point(10, 11);
-let px: int = match p { Point(x, _) => x };
+let px: i32 = match p { Point(x, _) => x };
 ```
 
-A _unit-like struct_ is a structure without any fields, defined by leaving off
-the list of fields entirely. Such types will have a single value, just like
-the [unit value `()`](#unit-and-boolean-literals) of the unit type. For
-example:
+A _unit-like struct_ is a struct without any fields, defined by leaving off
+the list of fields entirely. Such a struct implicitly defines a constant of
+its type with the same name. For example:
 
 ```
 struct Cookie;
-let c = [Cookie, Cookie, Cookie, Cookie];
+let c = [Cookie, Cookie {}, Cookie, Cookie {}];
 ```
 
-The precise memory layout of a structure is not specified. One can specify a
+is equivalent to
+
+```
+struct Cookie {}
+const Cookie: Cookie = Cookie {};
+let c = [Cookie, Cookie {}, Cookie, Cookie {}];
+```
+
+The precise memory layout of a struct is not specified. One can specify a
 particular layout using the [`repr` attribute](#ffi-attributes).
 
 ### Enumerations
@@ -1386,8 +1204,8 @@ An example of an `enum` item and its use:
 
 ```
 enum Animal {
-  Dog,
-  Cat
+    Dog,
+    Cat,
 }
 
 let mut a: Animal = Animal::Dog;
@@ -1396,27 +1214,47 @@ a = Animal::Cat;
 
 Enumeration constructors can have either named or unnamed fields:
 
-```
-# #![feature(struct_variant)]
-# fn main() {
+```rust
 enum Animal {
     Dog (String, f64),
-    Cat { name: String, weight: f64 }
+    Cat { name: String, weight: f64 },
 }
 
 let mut a: Animal = Animal::Dog("Cocoa".to_string(), 37.2);
 a = Animal::Cat { name: "Spotty".to_string(), weight: 2.7 };
-# }
 ```
 
 In this example, `Cat` is a _struct-like enum variant_,
 whereas `Dog` is simply called an enum variant.
 
-### Constant items
+Each enum value has a _discriminant_ which is an integer associated to it. You
+can specify it explicitly:
 
-```{.ebnf .gram}
-const_item : "const" ident ':' type '=' expr ';' ;
 ```
+enum Foo {
+    Bar = 123,
+}
+```
+
+The right hand side of the specification is interpreted as an `isize` value,
+but the compiler is allowed to use a smaller type in the actual memory layout.
+The [`repr` attribute](#ffi-attributes) can be added in order to change
+the type of the right hand side and specify the memory layout.
+
+If a discriminant isn't specified, they start at zero, and add one for each
+variant, in order.
+
+You can cast an enum to get its discriminant:
+
+```
+# enum Foo { Bar = 123 }
+let x = Foo::Bar as u32; // x is now 123u32
+```
+
+This only works as long as none of the variants have data attached. If
+it were `Bar(i32)`, this is disallowed.
+
+### Constant items
 
 A *constant item* is a named _constant value_ which is not associated with a
 specific memory location in the program. Constants are essentially inlined
@@ -1435,28 +1273,24 @@ a type derived from those primitive types. The derived types are references with
 the `static` lifetime, fixed-size arrays, tuples, enum variants, and structs.
 
 ```
-const BIT1: uint = 1 << 0;
-const BIT2: uint = 1 << 1;
+const BIT1: u32 = 1 << 0;
+const BIT2: u32 = 1 << 1;
 
-const BITS: [uint, ..2] = [BIT1, BIT2];
+const BITS: [u32; 2] = [BIT1, BIT2];
 const STRING: &'static str = "bitstring";
 
 struct BitsNStrings<'a> {
-    mybits: [uint, ..2],
-    mystring: &'a str
+    mybits: [u32; 2],
+    mystring: &'a str,
 }
 
 const BITS_N_STRINGS: BitsNStrings<'static> = BitsNStrings {
     mybits: BITS,
-    mystring: STRING
+    mystring: STRING,
 };
 ```
 
 ### Static items
-
-```{.ebnf .gram}
-static_item : "static" ident ':' type '=' expr ';' ;
-```
 
 A *static item* is similar to a *constant*, except that it represents a precise
 memory location in the program. A static is never "inlined" at the usage site,
@@ -1470,28 +1304,12 @@ All access to a static is safe, but there are a number of restrictions on
 statics:
 
 * Statics may not contain any destructors.
-* The types of static values must ascribe to `Sync` to allow threadsafe access.
+* The types of static values must ascribe to `Sync` to allow thread-safe access.
 * Statics may not refer to other statics by value, only by reference.
 * Constants cannot refer to statics.
 
 Constants should in general be preferred over statics, unless large amounts of
 data are being stored, or single-address and mutability properties are required.
-
-```
-use std::sync::atomic;
-
-// Note that INIT_ATOMIC_UINT is a *const*, but it may be used to initialize a
-// static. This static can be modified, so it is not placed in read-only memory.
-static COUNTER: atomic::AtomicUint = atomic::INIT_ATOMIC_UINT;
-
-// This table is a candidate to be placed in read-only memory.
-static TABLE: &'static [uint] = &[1, 2, 3, /* ... */];
-
-for slot in TABLE.iter() {
-    println!("{}", slot);
-}
-COUNTER.fetch_add(1, atomic::SeqCst);
-```
 
 #### Mutable statics
 
@@ -1500,20 +1318,20 @@ be modified by the program. One of Rust's goals is to make concurrency bugs
 hard to run into, and this is obviously a very large source of race conditions
 or other bugs. For this reason, an `unsafe` block is required when either
 reading or writing a mutable static variable. Care should be taken to ensure
-that modifications to a mutable static are safe with respect to other tasks
+that modifications to a mutable static are safe with respect to other threads
 running in the same process.
 
 Mutable statics are still very useful, however. They can be used with C
 libraries and can also be bound from C libraries (in an `extern` block).
 
 ```
-# fn atomic_add(_: &mut uint, _: uint) -> uint { 2 }
+# fn atomic_add(_: &mut u32, _: u32) -> u32 { 2 }
 
-static mut LEVELS: uint = 0;
+static mut LEVELS: u32 = 0;
 
 // This violates the idea of no shared state, and this doesn't internally
 // protect against races, so this function is `unsafe`
-unsafe fn bump_levels_unsafe1() -> uint {
+unsafe fn bump_levels_unsafe1() -> u32 {
     let ret = LEVELS;
     LEVELS += 1;
     return ret;
@@ -1522,7 +1340,7 @@ unsafe fn bump_levels_unsafe1() -> uint {
 // Assuming that we have an atomic_add function which returns the old value,
 // this function is "safe" but the meaning of the return value may not be what
 // callers expect, so it's still marked as `unsafe`
-unsafe fn bump_levels_unsafe2() -> uint {
+unsafe fn bump_levels_unsafe2() -> u32 {
     return atomic_add(&mut LEVELS, 1);
 }
 ```
@@ -1532,18 +1350,35 @@ type of the value is not required to ascribe to `Sync`.
 
 ### Traits
 
-A _trait_ describes a set of method types.
+A _trait_ describes an abstract interface that types can
+implement. This interface consists of associated items, which come in
+three varieties:
 
-Traits can include default implementations of methods, written in terms of some
-unknown [`self` type](#self-types); the `self` type may either be completely
-unspecified, or constrained by some other trait.
+- functions
+- constants
+- types
+
+Associated functions whose first parameter is named `self` are called
+methods and may be invoked using `.` notation (e.g., `x.foo()`).
+
+All traits define an implicit type parameter `Self` that refers to
+"the type that is implementing this interface". Traits may also
+contain additional type parameters. These type parameters (including
+`Self`) may be constrained by other traits and so forth as usual.
+
+Trait bounds on `Self` are considered "supertraits". These are
+required to be acyclic.  Supertraits are somewhat different from other
+constraints in that they affect what methods are available in the
+vtable when the trait is used as a [trait object](#trait-objects).
 
 Traits are implemented for specific types through separate
 [implementations](#implementations).
 
+Consider the following trait:
+
 ```
-# type Surface = int;
-# type BoundingBox = int;
+# type Surface = i32;
+# type BoundingBox = i32;
 trait Shape {
     fn draw(&self, Surface);
     fn bounding_box(&self) -> BoundingBox;
@@ -1555,25 +1390,71 @@ This defines a trait with two methods. All values that have
 `draw` and `bounding_box` methods called, using `value.bounding_box()`
 [syntax](#method-call-expressions).
 
+Traits can include default implementations of methods, as in:
+
+```
+trait Foo {
+    fn bar(&self);
+    fn baz(&self) { println!("We called baz."); }
+}
+```
+
+Here the `baz` method has a default implementation, so types that implement
+`Foo` need only implement `bar`. It is also possible for implementing types
+to override a method that has a default implementation.
+
 Type parameters can be specified for a trait to make it generic. These appear
 after the trait name, using the same syntax used in [generic
 functions](#generic-functions).
 
 ```
 trait Seq<T> {
-   fn len(&self) -> uint;
-   fn elt_at(&self, n: uint) -> T;
-   fn iter(&self, |T|);
+    fn len(&self) -> u32;
+    fn elt_at(&self, n: u32) -> T;
+    fn iter<F>(&self, F) where F: Fn(T);
+}
+```
+
+It is also possible to define associated types for a trait. Consider the
+following example of a `Container` trait. Notice how the type is available
+for use in the method signatures:
+
+```
+trait Container {
+    type E;
+    fn empty() -> Self;
+    fn insert(&mut self, Self::E);
+}
+```
+
+In order for a type to implement this trait, it must not only provide
+implementations for every method, but it must specify the type `E`. Here's
+an implementation of `Container` for the standard library type `Vec`:
+
+```
+# trait Container {
+#     type E;
+#     fn empty() -> Self;
+#     fn insert(&mut self, Self::E);
+# }
+impl<T> Container for Vec<T> {
+    type E = T;
+    fn empty() -> Vec<T> { Vec::new() }
+    fn insert(&mut self, x: T) { self.push(x); }
 }
 ```
 
 Generic functions may use traits as _bounds_ on their type parameters. This
-will have two effects: only types that have the trait may instantiate the
-parameter, and within the generic function, the methods of the trait can be
-called on values that have the parameter's type. For example:
+will have two effects:
+
+- Only types that have the trait may instantiate the parameter.
+- Within the generic function, the methods of the trait can be
+  called on values that have the parameter's type.
+
+For example:
 
 ```
-# type Surface = int;
+# type Surface = i32;
 # trait Shape { fn draw(&self, Surface); }
 fn draw_twice<T: Shape>(surface: Surface, sh: T) {
     sh.draw(surface);
@@ -1581,16 +1462,19 @@ fn draw_twice<T: Shape>(surface: Surface, sh: T) {
 }
 ```
 
-Traits also define an [object type](#object-types) with the same name as the
-trait. Values of this type are created by [casting](#type-cast-expressions)
-pointer values (pointing to a type for which an implementation of the given
-trait is in scope) to pointers to the trait name, used as a type.
+Traits also define a [trait object](#trait-objects) with the same
+name as the trait. Values of this type are created by coercing from a
+pointer of some specific type to a pointer of trait type. For example,
+`&T` could be coerced to `&Shape` if `T: Shape` holds (and similarly
+for `Box<T>`). This coercion can either be implicit or
+[explicit](#type-cast-expressions). Here is an example of an explicit
+coercion:
 
 ```
-# trait Shape { }
-# impl Shape for int { }
-# let mycircle = 0i;
-let myshape: Box<Shape> = box mycircle as Box<Shape>;
+trait Shape { }
+impl Shape for i32 { }
+let mycircle = 0i32;
+let myshape: Box<Shape> = Box::new(mycircle) as Box<Shape>;
 ```
 
 The resulting value is a box containing the value that was cast, along with
@@ -1607,27 +1491,49 @@ module. For example:
 
 ```
 trait Num {
-    fn from_int(n: int) -> Self;
+    fn from_i32(n: i32) -> Self;
 }
 impl Num for f64 {
-    fn from_int(n: int) -> f64 { n as f64 }
+    fn from_i32(n: i32) -> f64 { n as f64 }
 }
-let x: f64 = Num::from_int(42);
+let x: f64 = Num::from_i32(42);
 ```
 
-Traits may inherit from other traits. For example, in
+Traits may inherit from other traits. Consider the following example:
 
 ```
-trait Shape { fn area() -> f64; }
-trait Circle : Shape { fn radius() -> f64; }
+trait Shape { fn area(&self) -> f64; }
+trait Circle : Shape { fn radius(&self) -> f64; }
 ```
 
-the syntax `Circle : Shape` means that types that implement `Circle` must also
+The syntax `Circle : Shape` means that types that implement `Circle` must also
 have an implementation for `Shape`. Multiple supertraits are separated by `+`,
 `trait Circle : Shape + PartialEq { }`. In an implementation of `Circle` for a
 given type `T`, methods can refer to `Shape` methods, since the typechecker
 checks that any type with an implementation of `Circle` also has an
-implementation of `Shape`.
+implementation of `Shape`:
+
+```rust
+struct Foo;
+
+trait Shape { fn area(&self) -> f64; }
+trait Circle : Shape { fn radius(&self) -> f64; }
+impl Shape for Foo {
+    fn area(&self) -> f64 {
+        0.0
+    }
+}
+impl Circle for Foo {
+    fn radius(&self) -> f64 {
+        println!("calling area: {}", self.area());
+
+        0.0
+    }
+}
+
+let c = Foo;
+c.radius();
+```
 
 In type-parameterized functions, methods of the supertrait may be called on
 values of subtrait-bound type parameters. Referring to the previous example of
@@ -1647,10 +1553,10 @@ Likewise, supertrait methods may also be called on trait objects.
 ```{.ignore}
 # trait Shape { fn area(&self) -> f64; }
 # trait Circle : Shape { fn radius(&self) -> f64; }
-# impl Shape for int { fn area(&self) -> f64 { 0.0 } }
-# impl Circle for int { fn radius(&self) -> f64 { 0.0 } }
-# let mycircle = 0;
-let mycircle = box mycircle as Box<Circle>;
+# impl Shape for i32 { fn area(&self) -> f64 { 0.0 } }
+# impl Circle for i32 { fn radius(&self) -> f64 { 0.0 } }
+# let mycircle = 0i32;
+let mycircle = Box::new(mycircle) as Box<Circle>;
 let nonsense = mycircle.radius() * mycircle.area();
 ```
 
@@ -1662,9 +1568,9 @@ specific type.
 Implementations are defined with the keyword `impl`.
 
 ```
+# #[derive(Copy, Clone)]
 # struct Point {x: f64, y: f64};
-# impl Copy for Point {}
-# type Surface = int;
+# type Surface = i32;
 # struct BoundingBox {x: f64, y: f64, width: f64, height: f64};
 # trait Shape { fn draw(&self, Surface); fn bounding_box(&self) -> BoundingBox; }
 # fn do_draw_circle(s: Surface, c: Circle) { }
@@ -1675,25 +1581,33 @@ struct Circle {
 
 impl Copy for Circle {}
 
+impl Clone for Circle {
+    fn clone(&self) -> Circle { *self }
+}
+
 impl Shape for Circle {
     fn draw(&self, s: Surface) { do_draw_circle(s, *self); }
     fn bounding_box(&self) -> BoundingBox {
         let r = self.radius;
-        BoundingBox{x: self.center.x - r, y: self.center.y - r,
-         width: 2.0 * r, height: 2.0 * r}
+        BoundingBox {
+            x: self.center.x - r,
+            y: self.center.y - r,
+            width: 2.0 * r,
+            height: 2.0 * r,
+        }
     }
 }
 ```
 
 It is possible to define an implementation without referring to a trait. The
-methods in such an implementation can only be used as direct calls on the
-values of the type that the implementation targets. In such an implementation,
-the trait type and `for` after `impl` are omitted. Such implementations are
-limited to nominal types (enums, structs), and the implementation must appear
-in the same module or a sub-module as the `self` type:
+methods in such an implementation can only be used as direct calls on the values
+of the type that the implementation targets. In such an implementation, the
+trait type and `for` after `impl` are omitted. Such implementations are limited
+to nominal types (enums, structs, trait objects), and the implementation must
+appear in the same crate as the `self` type:
 
 ```
-struct Point {x: int, y: int}
+struct Point {x: i32, y: i32}
 
 impl Point {
     fn log(&self) {
@@ -1713,21 +1627,16 @@ type parameters taken by the trait it implements. Implementation parameters
 are written after the `impl` keyword.
 
 ```
-# trait Seq<T> { }
+# trait Seq<T> { fn dummy(&self, _: T) { } }
 impl<T> Seq<T> for Vec<T> {
-   /* ... */
+    /* ... */
 }
 impl Seq<bool> for u32 {
-   /* Treat the integer as a sequence of bits */
+    /* Treat the integer as a sequence of bits */
 }
 ```
 
 ### External blocks
-
-```{.ebnf .gram}
-extern_block_item : "extern" '{' extern_block '}' ;
-extern_block : [ foreign_fn ] * ;
-```
 
 External blocks form the basis for Rust's foreign function interface.
 Declarations in an external block describe symbols in external, non-Rust
@@ -1737,30 +1646,50 @@ Functions within external blocks are declared in the same way as other Rust
 functions, with the exception that they may not have a body and are instead
 terminated by a semicolon.
 
-```
-extern crate libc;
-use libc::{c_char, FILE};
-
-extern {
-    fn fopen(filename: *const c_char, mode: *const c_char) -> *mut FILE;
-}
-# fn main() {}
-```
-
 Functions within external blocks may be called by Rust code, just like
 functions defined in Rust. The Rust compiler automatically translates between
 the Rust ABI and the foreign ABI.
 
-A number of [attributes](#attributes) control the behavior of external blocks.
+A number of [attributes](#ffi-attributes) control the behavior of external blocks.
 
 By default external blocks assume that the library they are calling uses the
-standard C "cdecl" ABI. Other ABIs may be specified using an `abi` string, as
-shown here:
+standard C ABI on the specific platform. Other ABIs may be specified using an
+`abi` string, as shown here:
 
-```{.ignore}
+```ignore
 // Interface to the Windows API
 extern "stdcall" { }
 ```
+
+There are three ABI strings which are cross-platform, and which all compilers
+are guaranteed to support:
+
+* `extern "Rust"` -- The default ABI when you write a normal `fn foo()` in any
+  Rust code.
+* `extern "C"` -- This is the same as `extern fn foo()`; whatever the default
+  your C compiler supports.
+* `extern "system"` -- Usually the same as `extern "C"`, except on Win32, in
+  which case it's `"stdcall"`, or what you should use to link to the Windows API
+  itself
+
+There are also some platform-specific ABI strings:
+
+* `extern "cdecl"` -- The default for x86\_32 C code.
+* `extern "stdcall"` -- The default for the Win32 API on x86\_32.
+* `extern "win64"` -- The default for C code on x86\_64 Windows.
+* `extern "sysv64"` -- The default for C code on non-Windows x86\_64.
+* `extern "aapcs"` -- The default for ARM.
+* `extern "fastcall"` -- The `fastcall` ABI -- corresponds to MSVC's
+  `__fastcall` and GCC and clang's `__attribute__((fastcall))`
+* `extern "vectorcall"` -- The `vectorcall` ABI -- corresponds to MSVC's
+  `__vectorcall` and clang's `__attribute__((vectorcall))`
+
+Finally, there are some rustc-specific ABI strings:
+
+* `extern "rust-intrinsic"` -- The ABI of rustc intrinsics.
+* `extern "rust-call"` -- The ABI of the Fn::call trait functions.
+* `extern "platform-intrinsic"` -- Specific platform intrinsics -- like, for
+  example, `sqrt` -- have this ABI. You should never have to deal with it.
 
 The `link` attribute allows the name of the library to be specified. When
 specified the compiler will attempt to link against the native library of the
@@ -1774,6 +1703,10 @@ extern { }
 The type of a function declared in an extern block is `extern "abi" fn(A1, ...,
 An) -> R`, where `A1...An` are the declared types of its arguments and `R` is
 the declared return type.
+
+It is valid to add the `link` attribute on an empty extern block. You can use
+this to satisfy the linking requirements of extern blocks elsewhere in your code
+(including upstream crates) instead of adding the attribute to each extern block.
 
 ## Visibility and Privacy
 
@@ -1792,19 +1725,17 @@ warnings are generated, or otherwise "you used a private item of another module
 and weren't allowed to."
 
 By default, everything in Rust is *private*, with one exception. Enum variants
-in a `pub` enum are also public by default. You are allowed to alter this
-default visibility with the `priv` keyword. When an item is declared as `pub`,
+in a `pub` enum are also public by default. When an item is declared as `pub`,
 it can be thought of as being accessible to the outside world. For example:
 
 ```
-# #![allow(missing_copy_implementations)]
 # fn main() {}
 // Declare a private struct
 struct Foo;
 
 // Declare a public struct with a private field
 pub struct Bar {
-    field: int
+    field: i32,
 }
 
 // Declare a public enum with two public variants
@@ -1824,7 +1755,7 @@ accesses in two cases:
 
 These two cases are surprisingly powerful for creating module hierarchies
 exposing public APIs while hiding internal implementation details. To help
-explain, here's a few use cases and what they would entail.
+explain, here's a few use cases and what they would entail:
 
 * A library developer needs to expose functionality to crates which link
   against their library. As a consequence of the first case, this means that
@@ -1835,7 +1766,7 @@ explain, here's a few use cases and what they would entail.
 * A crate needs a global available "helper module" to itself, but it doesn't
   want to expose the helper module as a public API. To accomplish this, the
   root of the crate's hierarchy would have a private module which then
-  internally has a "public api". Because the entire crate is a descendant of
+  internally has a "public API". Because the entire crate is a descendant of
   the root, then the entire local crate can access this private module through
   the second case.
 
@@ -1855,7 +1786,7 @@ import/expression is only valid if the destination is in the current visibility
 scope.
 
 Here's an example of a program which exemplifies the three cases outlined
-above.
+above:
 
 ```
 // This module is private, meaning that no external crate can access this
@@ -1907,7 +1838,7 @@ pub mod submodule {
 # fn main() {}
 ```
 
-For a rust program to pass the privacy checking pass, all paths must be valid
+For a Rust program to pass the privacy checking pass, all paths must be valid
 accesses given the two rules above. This includes all use statements,
 expressions, types, etc.
 
@@ -1919,16 +1850,18 @@ module through the rules above. It essentially allows public access into the
 re-exported item. For example, this program is valid:
 
 ```
-pub use self::implementation as api;
+pub use self::implementation::api;
 
 mod implementation {
-    pub fn f() {}
+    pub mod api {
+        pub fn f() {}
+    }
 }
 
 # fn main() {}
 ```
 
-This means that any external crate referencing `implementation::f` would
+This means that any external crate referencing `implementation::api::f` would
 receive a privacy violation, while the path `api::f` would be allowed.
 
 When re-exporting a private item, it can be thought of as allowing the "privacy
@@ -1936,13 +1869,6 @@ chain" being short-circuited through the reexport instead of passing through
 the namespace hierarchy as it normally would.
 
 ## Attributes
-
-```{.ebnf .gram}
-attribute : "#!" ? '[' meta_item ']' ;
-meta_item : ident [ '=' literal
-                  | '(' meta_seq ')' ] ? ;
-meta_seq : meta_item [ ',' meta_seq ] ? ;
-```
 
 Any item declaration may have an _attribute_ applied to it. Attributes in Rust
 are modeled on Attributes in ECMA-335, with the syntax coming from ECMA-334
@@ -1968,13 +1894,13 @@ An example of attributes:
 // A function marked as a unit test
 #[test]
 fn test_foo() {
-  /* ... */
+    /* ... */
 }
 
 // A conditionally-compiled module
 #[cfg(target_os="linux")]
 mod bar {
-  /* ... */
+    /* ... */
 }
 
 // A lint attribute used to suppress a warning/error
@@ -1989,7 +1915,7 @@ type int8_t = i8;
 
 ### Crate-only attributes
 
-- `crate_name` - specify the this crate's crate name.
+- `crate_name` - specify the crate's crate name.
 - `crate_type` - see [linkage](#linkage).
 - `feature` - see [compiler features](#compiler-features).
 - `no_builtins` - disable optimizing certain code patterns to invocations of
@@ -1999,11 +1925,18 @@ type int8_t = i8;
 - `no_start` - disable linking to the `native` crate, which specifies the
   "start" language item.
 - `no_std` - disable linking to the `std` crate.
+- `plugin` - load a list of named crates as compiler plugins, e.g.
+             `#![plugin(foo, bar)]`. Optional arguments for each plugin,
+             i.e. `#![plugin(foo(... args ...))]`, are provided to the plugin's
+             registrar function.  The `plugin` feature gate is required to use
+             this attribute.
+- `recursion_limit` - Sets the maximum depth for potentially
+                      infinitely-recursive compile-time operations like
+                      auto-dereference or macro expansion. The default is
+                      `#![recursion_limit="64"]`.
 
 ### Module-only attributes
 
-- `macro_escape` - macros defined in this module will be visible in the
-  module's parent, after this module has been included.
 - `no_implicit_prelude` - disable injecting `use std::prelude::*` in this
   module.
 - `path` - specifies the file to load the module from. `#[path="foo.rs"] mod
@@ -2021,6 +1954,11 @@ type int8_t = i8;
   item](#language-items) for more details.
 - `test` - indicates that this function is a test function, to only be compiled
   in case of `--test`.
+- `should_panic` - indicates that this test function should panic, inverting the success condition.
+- `cold` - The function is unlikely to be executed, so optimize it (and calls
+  to it) differently.
+- `naked` - The function utilizes a custom ABI or custom inline ASM that requires
+  epilogue and prologue to be skipped.
 
 ### Static-only attributes
 
@@ -2036,10 +1974,16 @@ On an `extern` block, the following attributes are interpreted:
   name and type. This is feature gated and the exact behavior is
   implementation-defined (due to variety of linker invocation syntax).
 - `link` - indicate that a native library should be linked to for the
-  declarations in this block to be linked correctly. `link` supports an optional `kind`
-  key with three possible values: `dylib`, `static`, and `framework`. See [external blocks](#external-blocks) for more about external blocks. Two
+  declarations in this block to be linked correctly. `link` supports an optional
+  `kind` key with three possible values: `dylib`, `static`, and `framework`. See
+  [external blocks](#external-blocks) for more about external blocks. Two
   examples: `#[link(name = "readline")]` and
   `#[link(name = "CoreFoundation", kind = "framework")]`.
+- `linked_from` - indicates what native library this block of FFI items is
+  coming from. This attribute is of the form `#[linked_from = "foo"]` where
+  `foo` is the name of a library in either `#[link]` or a `-l` flag. This
+  attribute is currently required to export symbols from a Rust dynamic library
+  on Windows, and it is feature gated behind the `linked_from` feature.
 
 On declarations inside an `extern` block, the following attributes are
 interpreted:
@@ -2066,35 +2010,66 @@ On `struct`s:
   remove any padding between fields (note that this is very fragile and may
   break platforms which require aligned access).
 
+### Macro-related attributes
+
+- `macro_use` on a `mod` — macros defined in this module will be visible in the
+  module's parent, after this module has been included.
+
+- `macro_use` on an `extern crate` — load macros from this crate.  An optional
+  list of names `#[macro_use(foo, bar)]` restricts the import to just those
+  macros named.  The `extern crate` must appear at the crate root, not inside
+  `mod`, which ensures proper function of the [`$crate` macro
+  variable](book/macros.html#the-variable-crate).
+
+- `macro_reexport` on an `extern crate` — re-export the named macros.
+
+- `macro_export` - export a macro for cross-crate usage.
+
+- `no_link` on an `extern crate` — even if we load this crate for macros, don't
+  link it into the output.
+
+See the [macros section of the
+book](book/macros.html#scoping-and-macro-importexport) for more information on
+macro scope.
+
+
 ### Miscellaneous attributes
 
+- `deprecated` - mark the item as deprecated; the full attribute is `#[deprecated(since = "crate version", note = "...")`, where both arguments are optional.
 - `export_name` - on statics and functions, this determines the name of the
   exported symbol.
 - `link_section` - on statics and functions, this specifies the section of the
   object file that this item's contents will be placed into.
-- `macro_export` - export a macro for cross-crate usage.
 - `no_mangle` - on any item, do not apply the standard name mangling. Set the
   symbol for this item to its identifier.
-- `packed` - on structs or enums, eliminate any padding that would be used to
-  align fields.
-- `phase` - on `extern crate` statements, allows specifying which "phase" of
-  compilation the crate should be loaded for. Currently, there are two
-  choices: `link` and `plugin`. `link` is the default. `plugin` will [load the
-  crate at compile-time][plugin] and use any syntax extensions or lints that the crate
-  defines. They can both be specified, `#[phase(link, plugin)]` to use a crate
-  both at runtime and compiletime.
 - `simd` - on certain tuple structs, derive the arithmetic operators, which
   lower to the target's SIMD instructions, if any; the `simd` feature gate
   is necessary to use this attribute.
-- `static_assert` - on statics whose type is `bool`, terminates compilation
-  with an error if it is not initialized to `true`.
-- `unsafe_destructor` - allow implementations of the "drop" language item
-  where the type it is implemented for does not implement the "send" language
-  item; the `unsafe_destructor` feature gate is needed to use this attribute
-- `unsafe_no_drop_flag` - on structs, remove the flag that prevents
-  destructors from being run twice. Destructors might be run multiple times on
-  the same object with this attribute.
+- `unsafe_destructor_blind_to_params` - on `Drop::drop` method, asserts that the
+  destructor code (and all potential specializations of that code) will
+  never attempt to read from nor write to any references with lifetimes
+  that come in via generic parameters. This is a constraint we cannot
+  currently express via the type system, and therefore we rely on the
+  programmer to assert that it holds. Adding this to a Drop impl causes
+  the associated destructor to be considered "uninteresting" by the
+  Drop-Check rule, and thus it can help sidestep data ordering
+  constraints that would otherwise be introduced by the Drop-Check
+  rule. Such sidestepping of the constraints, if done incorrectly, can
+  lead to undefined behavior (in the form of reading or writing to data
+  outside of its dynamic extent), and thus this attribute has the word
+  "unsafe" in its name. To use this, the
+  `unsafe_destructor_blind_to_params` feature gate must be enabled.
 - `doc` - Doc comments such as `/// foo` are equivalent to `#[doc = "foo"]`.
+- `rustc_on_unimplemented` - Write a custom note to be shown along with the error
+   when the trait is found to be unimplemented on a type.
+   You may use format arguments like `{T}`, `{A}` to correspond to the
+   types at the point of use corresponding to the type parameters of the
+   trait of the same name. `{Self}` will be replaced with the type that is supposed
+   to implement the trait but doesn't. To use this, the `on_unimplemented` feature gate
+   must be enabled.
+- `must_use` - on structs and enums, will warn if a value of this type isn't used or
+   assigned to a variable. You may also include an optional message by using
+   `#[must_use = "message"]` which will be given alongside the warning.
 
 ### Conditional compilation
 
@@ -2104,8 +2079,8 @@ release builds.
 
 There are two kinds of configuration options, one that is either defined or not
 (`#[cfg(foo)]`), and the other that contains a string that can be checked
-against (`#[cfg(bar = "baz")]` (currently only compiler-defined configuration
-options can have the latter form).
+against (`#[cfg(bar = "baz")]`). Currently, only compiler-defined configuration
+options can have the latter form.
 
 ```
 // The function is only included in the build when compiling for OSX
@@ -2122,7 +2097,7 @@ fn needs_foo_or_bar() {
 
 // This function is only included when compiling for a unixish OS with a 32-bit
 // architecture
-#[cfg(all(unix, target_word_size = "32"))]
+#[cfg(all(unix, target_pointer_width = "32"))]
 fn on_32bit_unix() {
   // ...
 }
@@ -2140,20 +2115,51 @@ arbitrarily complex configurations through nesting.
 
 The following configurations must be defined by the implementation:
 
-* `target_arch = "..."`. Target CPU architecture, such as `"x86"`, `"x86_64"`
-  `"mips"`, or `"arm"`.
-* `target_endian = "..."`. Endianness of the target CPU, either `"little"` or
-  `"big"`.
-* `target_family = "..."`. Operating system family of the target, e. g.
+* `target_arch = "..."` - Target CPU architecture, such as `"x86"`,
+  `"x86_64"` `"mips"`, `"powerpc"`, `"powerpc64"`, `"arm"`, or
+  `"aarch64"`. This value is closely related to the first element of
+  the platform target triple, though it is not identical.
+* `target_os = "..."` - Operating system of the target, examples
+  include `"windows"`, `"macos"`, `"ios"`, `"linux"`, `"android"`,
+  `"freebsd"`, `"dragonfly"`, `"bitrig"` , `"openbsd"` or
+  `"netbsd"`. This value is closely related to the second and third
+  element of the platform target triple, though it is not identical.
+* `target_family = "..."` - Operating system family of the target, e. g.
   `"unix"` or `"windows"`. The value of this configuration option is defined
   as a configuration itself, like `unix` or `windows`.
-* `target_os = "..."`. Operating system of the target, examples include
-  `"win32"`, `"macos"`, `"linux"`, `"android"`, `"freebsd"` or `"dragonfly"`.
-* `target_word_size = "..."`. Target word size in bits. This is set to `"32"`
-  for targets with 32-bit pointers, and likewise set to `"64"` for 64-bit
-  pointers.
-* `unix`. See `target_family`.
-* `windows`. See `target_family`.
+* `unix` - See `target_family`.
+* `windows` - See `target_family`.
+* `target_env = ".."` - Further disambiguates the target platform with
+  information about the ABI/libc. Presently this value is either
+  `"gnu"`, `"msvc"`, `"musl"`, or the empty string. For historical
+  reasons this value has only been defined as non-empty when needed
+  for disambiguation. Thus on many GNU platforms this value will be
+  empty. This value is closely related to the fourth element of the
+  platform target triple, though it is not identical. For example,
+  embedded ABIs such as `gnueabihf` will simply define `target_env` as
+  `"gnu"`.
+* `target_endian = "..."` - Endianness of the target CPU, either `"little"` or
+  `"big"`.
+* `target_pointer_width = "..."` - Target pointer width in bits. This is set
+  to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
+  64-bit pointers.
+* `target_has_atomic = "..."` - Set of integer sizes on which the target can perform
+  atomic operations. Values are `"8"`, `"16"`, `"32"`, `"64"` and `"ptr"`.
+* `target_vendor = "..."` - Vendor of the target, for example `apple`, `pc`, or
+  simply `"unknown"`.
+* `test` - Enabled when compiling the test harness (using the `--test` flag).
+* `debug_assertions` - Enabled by default when compiling without optimizations.
+  This can be used to enable extra debugging code in development but not in
+  production.  For example, it controls the behavior of the standard library's
+  `debug_assert!` macro.
+
+You can also set another attribute based on a `cfg` variable with `cfg_attr`:
+
+```rust,ignore
+#[cfg_attr(a, b)]
+```
+
+Will be the same as `#[b]` if `a` is set by `cfg`, and nothing otherwise.
 
 ### Lint check attributes
 
@@ -2172,56 +2178,56 @@ For any lint check `C`:
 
 The lint checks supported by the compiler can be found via `rustc -W help`,
 along with their default settings.  [Compiler
-plugins](guide-plugin.html#lint-plugins) can provide additional lint checks.
+plugins](book/compiler-plugins.html#lint-plugins) can provide additional lint checks.
 
 ```{.ignore}
-mod m1 {
+pub mod m1 {
     // Missing documentation is ignored here
     #[allow(missing_docs)]
-    pub fn undocumented_one() -> int { 1 }
+    pub fn undocumented_one() -> i32 { 1 }
 
     // Missing documentation signals a warning here
     #[warn(missing_docs)]
-    pub fn undocumented_too() -> int { 2 }
+    pub fn undocumented_too() -> i32 { 2 }
 
     // Missing documentation signals an error here
     #[deny(missing_docs)]
-    pub fn undocumented_end() -> int { 3 }
+    pub fn undocumented_end() -> i32 { 3 }
 }
 ```
 
 This example shows how one can use `allow` and `warn` to toggle a particular
-check on and off.
+check on and off:
 
 ```{.ignore}
 #[warn(missing_docs)]
-mod m2{
+pub mod m2{
     #[allow(missing_docs)]
-    mod nested {
+    pub mod nested {
         // Missing documentation is ignored here
-        pub fn undocumented_one() -> int { 1 }
+        pub fn undocumented_one() -> i32 { 1 }
 
         // Missing documentation signals a warning here,
         // despite the allow above.
         #[warn(missing_docs)]
-        pub fn undocumented_two() -> int { 2 }
+        pub fn undocumented_two() -> i32 { 2 }
     }
 
     // Missing documentation signals a warning here
-    pub fn undocumented_too() -> int { 3 }
+    pub fn undocumented_too() -> i32 { 3 }
 }
 ```
 
 This example shows how one can use `forbid` to disallow uses of `allow` for
-that lint check.
+that lint check:
 
 ```{.ignore}
 #[forbid(missing_docs)]
-mod m3 {
+pub mod m3 {
     // Attempting to toggle warning signals an error here
     #[allow(missing_docs)]
     /// Returns 2.
-    pub fn undocumented_too() -> int { 2 }
+    pub fn undocumented_too() -> i32 { 2 }
 }
 ```
 
@@ -2234,7 +2240,7 @@ makes it possible to declare these operations. For example, the `str` module
 in the Rust standard library defines the string equality function:
 
 ```{.ignore}
-#[lang="str_eq"]
+#[lang = "str_eq"]
 pub fn eq_slice(a: &str, b: &str) -> bool {
     // details elided
 }
@@ -2244,158 +2250,21 @@ The name `str_eq` has a special meaning to the Rust compiler, and the presence
 of this definition means that it will use this definition when generating calls
 to the string equality function.
 
-A complete list of the built-in language items follows:
-
-#### Built-in Traits
-
-* `copy`
-  : Types that do not move ownership when used by-value.
-* `drop`
-  : Have destructors.
-* `send`
-  : Able to be sent across task boundaries.
-* `sized`
-  : Has a size known at compile time.
-* `sync`
-  : Able to be safely shared between tasks when aliased.
-
-#### Operators
-
-These language items are traits:
-
-* `add`
-  : Elements can be added (for example, integers and floats).
-* `sub`
-  : Elements can be subtracted.
-* `mul`
-  : Elements can be multiplied.
-* `div`
-  : Elements have a division operation.
-* `rem`
-  : Elements have a remainder operation.
-* `neg`
-  : Elements can be negated arithmetically.
-* `not`
-  : Elements can be negated logically.
-* `bitxor`
-  : Elements have an exclusive-or operation.
-* `bitand`
-  : Elements have a bitwise `and` operation.
-* `bitor`
-  : Elements have a bitwise `or` operation.
-* `shl`
-  : Elements have a left shift operation.
-* `shr`
-  : Elements have a right shift operation.
-* `index`
-  : Elements can be indexed.
-* `index_mut`
-  : ___Needs filling in___
-* `eq`
-  : Elements can be compared for equality.
-* `ord`
-  : Elements have a partial ordering.
-* `deref`
-  : `*` can be applied, yielding a reference to another type
-* `deref_mut`
-  : `*` can be applied, yielding a mutable reference to another type
-
-These are functions:
-
-* `fn`
-  : ___Needs filling in___
-* `fn_mut`
-  : ___Needs filling in___
-* `fn_once`
-  : ___Needs filling in___
-* `str_eq`
-  : Compare two strings (`&str`) for equality.
-* `strdup_uniq`
-  : Return a new unique string
-    containing a copy of the contents of a unique string.
-
-#### Types
-
-* `type_id`
-  : The type returned by the `type_id` intrinsic.
-* `unsafe`
-  : A type whose contents can be mutated through an immutable reference
-
-#### Marker types
-
-These types help drive the compiler's analysis
-
-* `begin_unwind`
-  : ___Needs filling in___
-* `no_copy_bound`
-  : This type does not implement "copy", even if eligible
-* `no_send_bound`
-  : This type does not implement "send", even if eligible
-* `no_sync_bound`
-  : This type does not implement "sync", even if eligible
-* `eh_personality`
-  : ___Needs filling in___
-* `exchange_free`
-  : Free memory that was allocated on the exchange heap.
-* `exchange_malloc`
-  : Allocate memory on the exchange heap.
-* `closure_exchange_malloc`
-  : ___Needs filling in___
-* `panic`
-  : Abort the program with an error.
-* `fail_bounds_check`
-  : Abort the program with a bounds check error.
-* `free`
-  : Free memory that was allocated on the managed heap.
-* `gc`
-  : ___Needs filling in___
-* `exchange_heap`
-  : ___Needs filling in___
-* `iterator`
-  : ___Needs filling in___
-* `contravariant_lifetime`
-  : The lifetime parameter should be considered contravariant
-* `covariant_lifetime`
-  : The lifetime parameter should be considered covariant
-* `invariant_lifetime`
-  : The lifetime parameter should be considered invariant
-* `malloc`
-  : Allocate memory on the managed heap.
-* `owned_box`
-  : ___Needs filling in___
-* `stack_exhausted`
-  : ___Needs filling in___
-* `start`
-  : ___Needs filling in___
-* `contravariant_type`
-  : The type parameter should be considered contravariant
-* `covariant_type`
-  : The type parameter should be considered covariant
-* `invariant_type`
-  : The type parameter should be considered invariant
-* `ty_desc`
-  : ___Needs filling in___
-
-> **Note:** This list is likely to become out of date. We should auto-generate
-> it from `librustc/middle/lang_items.rs`.
+The set of language items is currently considered unstable. A complete
+list of the built-in language items will be added in the future.
 
 ### Inline attributes
 
-The inline attribute is used to suggest to the compiler to perform an inline
-expansion and place a copy of the function or static in the caller rather than
-generating code to call the function or access the static where it is defined.
+The inline attribute suggests that the compiler should place a copy of
+the function or static in the caller, rather than generating code to
+call the function or access the static where it is defined.
 
 The compiler automatically inlines functions based on internal heuristics.
-Incorrectly inlining functions can actually making the program slower, so it
+Incorrectly inlining functions can actually make the program slower, so it
 should be used with care.
 
-Immutable statics are always considered inlineable unless marked with
-`#[inline(never)]`. It is undefined whether two different inlineable statics
-have the same memory address. In other words, the compiler is free to collapse
-duplicate inlineable statics together.
-
-`#[inline]` and `#[inline(always)]` always causes the function to be serialized
-into crate metadata to allow cross-crate inlining.
+`#[inline]` and `#[inline(always)]` always cause the function to be serialized
+into the crate metadata to allow cross-crate inlining.
 
 There are three different types of inline attributes:
 
@@ -2403,25 +2272,25 @@ There are three different types of inline attributes:
 * `#[inline(always)]` asks the compiler to always perform an inline expansion.
 * `#[inline(never)]` asks the compiler to never perform an inline expansion.
 
-### Deriving
+### `derive`
 
-The `deriving` attribute allows certain traits to be automatically implemented
+The `derive` attribute allows certain traits to be automatically implemented
 for data structures. For example, the following will create an `impl` for the
 `PartialEq` and `Clone` traits for `Foo`, the type parameter `T` will be given
 the `PartialEq` or `Clone` constraints for the appropriate `impl`:
 
 ```
-#[deriving(PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 struct Foo<T> {
-    a: int,
-    b: T
+    a: i32,
+    b: T,
 }
 ```
 
 The generated `impl` for `PartialEq` is equivalent to
 
 ```
-# struct Foo<T> { a: int, b: T }
+# struct Foo<T> { a: i32, b: T }
 impl<T: PartialEq> PartialEq for Foo<T> {
     fn eq(&self, other: &Foo<T>) -> bool {
         self.a == other.a && self.b == other.b
@@ -2432,89 +2301,6 @@ impl<T: PartialEq> PartialEq for Foo<T> {
     }
 }
 ```
-
-Supported traits for `deriving` are:
-
-* Comparison traits: `PartialEq`, `Eq`, `PartialOrd`, `Ord`.
-* Serialization: `Encodable`, `Decodable`. These require `serialize`.
-* `Clone`, to create `T` from `&T` via a copy.
-* `Default`, to create an empty instance of a data type.
-* `FromPrimitive`, to create an instance from a numeric primitive.
-* `Hash`, to iterate over the bytes in a data type.
-* `Rand`, to create a random instance of a data type.
-* `Show`, to format a value using the `{}` formatter.
-* `Zero`, to create a zero instance of a numeric data type.
-
-### Stability
-
-One can indicate the stability of an API using the following attributes:
-
-* `deprecated`: This item should no longer be used, e.g. it has been
-  replaced. No guarantee of backwards-compatibility.
-* `experimental`: This item was only recently introduced or is
-  otherwise in a state of flux. It may change significantly, or even
-  be removed. No guarantee of backwards-compatibility.
-* `unstable`: This item is still under development, but requires more
-  testing to be considered stable. No guarantee of backwards-compatibility.
-* `stable`: This item is considered stable, and will not change
-  significantly. Guarantee of backwards-compatibility.
-* `frozen`: This item is very stable, and is unlikely to
-  change. Guarantee of backwards-compatibility.
-* `locked`: This item will never change unless a serious bug is
-  found. Guarantee of backwards-compatibility.
-
-These levels are directly inspired by
-[Node.js' "stability index"](http://nodejs.org/api/documentation.html).
-
-Stability levels are inherited, so an item's stability attribute is the default
-stability for everything nested underneath it.
-
-There are lints for disallowing items marked with certain levels: `deprecated`,
-`experimental` and `unstable`. For now, only `deprecated` warns by default, but
-this will change once the standard library has been stabilized. Stability
-levels are meant to be promises at the crate level, so these lints only apply
-when referencing items from an _external_ crate, not to items defined within
-the current crate. Items with no stability level are considered to be unstable
-for the purposes of the lint. One can give an optional string that will be
-displayed when the lint flags the use of an item.
-
-For example, if we define one crate called `stability_levels`:
-
-```{.ignore}
-#[deprecated="replaced by `best`"]
-pub fn bad() {
-    // delete everything
-}
-
-pub fn better() {
-    // delete fewer things
-}
-
-#[stable]
-pub fn best() {
-    // delete nothing
-}
-```
-
-then the lints will work as follows for a client crate:
-
-```{.ignore}
-#![warn(unstable)]
-extern crate stability_levels;
-use stability_levels::{bad, better, best};
-
-fn main() {
-    bad(); // "warning: use of deprecated item: replaced by `best`"
-
-    better(); // "warning: use of unmarked item"
-
-    best(); // no warning
-}
-```
-
-> **Note:** Currently these are only checked when applied to individual
-> functions, structs, methods and enum variants, *not* to entire modules,
-> traits, impls or enums themselves.
 
 ### Compiler Features
 
@@ -2536,17 +2322,51 @@ considered off, and using the features will result in a compiler error.
 
 The currently implemented features of the reference compiler are:
 
+* `advanced_slice_patterns` - See the [match expressions](#match-expressions)
+                              section for discussion; the exact semantics of
+                              slice patterns are subject to change, so some types
+                              are still unstable.
+
+* `slice_patterns` - OK, actually, slice patterns are just scary and
+                     completely unstable.
+
 * `asm` - The `asm!` macro provides a means for inline assembly. This is often
           useful, but the exact syntax for this feature along with its
           semantics are likely to change, so this macro usage must be opted
           into.
 
+* `associated_consts` - Allows constants to be defined in `impl` and `trait`
+                        blocks, so that they can be associated with a type or
+                        trait in a similar manner to methods and associated
+                        types.
+
+* `box_patterns` - Allows `box` patterns, the exact semantics of which
+                   is subject to change.
+
+* `box_syntax` - Allows use of `box` expressions, the exact semantics of which
+                 is subject to change.
+
+* `cfg_target_vendor` - Allows conditional compilation using the `target_vendor`
+                        matcher which is subject to change.
+
+* `cfg_target_has_atomic` - Allows conditional compilation using the `target_has_atomic`
+                            matcher which is subject to change.
+
 * `concat_idents` - Allows use of the `concat_idents` macro, which is in many
                     ways insufficient for concatenating identifiers, and may be
                     removed entirely for something more wholesome.
 
-* `default_type_params` - Allows use of default type parameters. The future of
-                          this feature is uncertain.
+* `custom_attribute` - Allows the usage of attributes unknown to the compiler
+                       so that new attributes can be added in a backwards compatible
+                       manner (RFC 572).
+
+* `custom_derive` - Allows the use of `#[derive(Foo,Bar)]` as sugar for
+                    `#[derive_Foo] #[derive_Bar]`, which can be user-defined syntax
+                    extensions.
+
+* `inclusive_range_syntax` - Allows use of the `a...b` and `...b` syntax for inclusive ranges.
+
+* `inclusive_range` - Allows use of the types that represent desugared inclusive ranges.
 
 * `intrinsics` - Allows use of the "rust-intrinsics" ABI. Compiler intrinsics
                  are inherently unstable and no promise about them is made.
@@ -2561,19 +2381,21 @@ The currently implemented features of the reference compiler are:
                 if the system linker is not used then specifying custom flags
                 doesn't have much meaning.
 
+* `link_llvm_intrinsics` – Allows linking to LLVM intrinsics via
+                           `#[link_name="llvm.*"]`.
+
 * `linkage` - Allows use of the `linkage` attribute, which is not portable.
 
 * `log_syntax` - Allows use of the `log_syntax` macro attribute, which is a
                  nasty hack that will certainly be removed.
 
-* `macro_rules` - The definition of new macros. This does not encompass
-                  macro-invocation, that is always enabled by default, this
-                  only covers the definition of new macros. There are currently
-                  various problems with invoking macros, how they interact with
-                  their environment, and possibly how they are used outside of
-                  location in which they are defined. Macro definitions are
-                  likely to change slightly in the future, so they are
-                  currently hidden behind this feature.
+* `main` - Allows use of the `#[main]` attribute, which changes the entry point
+           into a Rust program. This capability is subject to change.
+
+* `macro_reexport` - Allows macros to be re-exported from one crate after being imported
+                     from another. This feature was originally designed with the sole
+                     use case of the Rust standard library in mind, and is subject to
+                     change.
 
 * `non_ascii_idents` - The compiler supports the use of non-ascii identifiers,
                        but the implementation is a little rough around the
@@ -2581,23 +2403,30 @@ The currently implemented features of the reference compiler are:
                        for now until the specification of identifiers is fully
                        fleshed out.
 
-* `once_fns` - Onceness guarantees a closure is only executed once. Defining a
-               closure as `once` is unlikely to be supported going forward. So
-               they are hidden behind this feature until they are to be removed.
+* `no_std` - Allows the `#![no_std]` crate attribute, which disables the implicit
+             `extern crate std`. This typically requires use of the unstable APIs
+             behind the libstd "facade", such as libcore and libcollections. It
+             may also cause problems when using syntax extensions, including
+             `#[derive]`.
 
-* `phase` - Usage of the `#[phase]` attribute allows loading compiler plugins
-            for custom lints or syntax extensions. The implementation is
-            considered unwholesome and in need of overhaul, and it is not clear
-            what they will look like moving forward.
+* `on_unimplemented` - Allows the `#[rustc_on_unimplemented]` attribute, which allows
+                       trait definitions to add specialized notes to error messages
+                       when an implementation was expected but not found.
 
-* `plugin_registrar` - Indicates that a crate has [compiler plugins][plugin] that it
-                       wants to load. As with `phase`, the implementation is
-                       in need of an overhaul, and it is not clear that plugins
-                       defined using this will continue to work.
+* `optin_builtin_traits` - Allows the definition of default and negative trait
+                           implementations. Experimental.
+
+* `plugin` - Usage of [compiler plugins][plugin] for custom lints or syntax extensions.
+             These depend on compiler internals and are subject to change.
+
+* `plugin_registrar` - Indicates that a crate provides [compiler plugins][plugin].
 
 * `quote` - Allows use of the `quote_*!` family of macros, which are
             implemented very poorly and will likely change significantly
             with a proper implementation.
+
+* `rustc_attrs` - Gates internal `#[rustc_*]` attributes which may be
+                  for internal use only or have meaning added to them in the future.
 
 * `rustc_diagnostic_macros`- A mysterious feature, used in the implementation
                              of rustc, not meant for mortals.
@@ -2605,24 +2434,19 @@ The currently implemented features of the reference compiler are:
 * `simd` - Allows use of the `#[simd]` attribute, which is overly simple and
            not the SIMD interface we want to expose in the long term.
 
-* `struct_inherit` - Allows using struct inheritance, which is barely
-                     implemented and will probably be removed. Don't use this.
+* `simd_ffi` - Allows use of SIMD vectors in signatures for foreign functions.
+               The SIMD interface is subject to change.
 
-* `struct_variant` - Structural enum variants (those with named fields). It is
-                     currently unknown whether this style of enum variant is as
-                     fully supported as the tuple-forms, and it's not certain
-                     that this style of variant should remain in the language.
-                     For now this style of variant is hidden behind a feature
-                     flag.
+* `start` - Allows use of the `#[start]` attribute, which changes the entry point
+            into a Rust program. This capability, especially the signature for the
+            annotated function, is subject to change.
 
 * `thread_local` - The usage of the `#[thread_local]` attribute is experimental
                    and should be seen as unstable. This attribute is used to
                    declare a `static` as being unique per-thread leveraging
                    LLVM's implementation which works in concert with the kernel
                    loader and dynamic linker. This is not necessarily available
-                   on all platforms, and usage of it is discouraged (rust
-                   focuses more on task-local data instead of thread-local
-                   data).
+                   on all platforms, and usage of it is discouraged.
 
 * `trace_macros` - Allows use of the `trace_macros` macro, which is a nasty
                    hack that will certainly be removed.
@@ -2630,14 +2454,36 @@ The currently implemented features of the reference compiler are:
 * `unboxed_closures` - Rust's new closure design, which is currently a work in
                        progress feature with many known bugs.
 
-* `unsafe_destructor` - Allows use of the `#[unsafe_destructor]` attribute,
-                        which is considered wildly unsafe and will be
-                        obsoleted by language improvements.
+* `unmarked_api` - Allows use of items within a `#![staged_api]` crate
+                   which have not been marked with a stability marker.
+                   Such items should not be allowed by the compiler to exist,
+                   so if you need this there probably is a compiler bug.
 
-* `associated_types` - Allows type aliases in traits. Experimental.
+* `allow_internal_unstable` - Allows `macro_rules!` macros to be tagged with the
+                              `#[allow_internal_unstable]` attribute, designed
+                              to allow `std` macros to call
+                              `#[unstable]`/feature-gated functionality
+                              internally without imposing on callers
+                              (i.e. making them behave like function calls in
+                              terms of encapsulation).
+* - `default_type_parameter_fallback` - Allows type parameter defaults to
+                                        influence type inference.
+
+* - `stmt_expr_attributes` - Allows attributes on expressions and
+                             non-item statements.
+
+* - `type_ascription` - Allows type ascription expressions `expr: Type`.
+
+* - `abi_vectorcall` - Allows the usage of the vectorcall calling convention
+                             (e.g. `extern "vectorcall" func fn_();`)
+
+* - `dotdot_in_tuple_patterns` - Allows `..` in tuple (struct) patterns.
+
+* - `abi_sysv64` - Allows the usage of the system V AMD64 calling convention
+                             (e.g. `extern "sysv64" func fn_();`)
 
 If a feature is promoted to a language feature, then all existing programs will
-start to receive compilation warnings about #[feature] directives which enabled
+start to receive compilation warnings about `#![feature]` directives which enabled
 the new feature (because the directive is no longer necessary). However, if a
 feature is decided to be removed from the language, errors will be issued (if
 there isn't a parser error first). The directive in this case is no longer
@@ -2671,14 +2517,14 @@ statements](#expression-statements).
 ### Declaration statements
 
 A _declaration statement_ is one that introduces one or more *names* into the
-enclosing statement block. The declared names may denote new slots or new
+enclosing statement block. The declared names may denote new variables or new
 items.
 
 #### Item declarations
 
 An _item declaration statement_ has a syntactic form identical to an
 [item](#items) declaration within a module. Declaring an item &mdash; a
-function, enumeration, structure, type, static, trait, implementation or module
+function, enumeration, struct, type, static, trait, implementation or module
 &mdash; locally within a statement block is simply a way of restricting its
 scope to a narrow region containing all of its uses; it is otherwise identical
 in meaning to declaring the item outside the statement block.
@@ -2686,18 +2532,13 @@ in meaning to declaring the item outside the statement block.
 > **Note**: there is no implicit capture of the function's dynamic environment when
 > declaring a function-local item.
 
-#### Slot declarations
+#### `let` statements
 
-```{.ebnf .gram}
-let_decl : "let" pat [':' type ] ? [ init ] ? ';' ;
-init : [ '=' ] expr ;
-```
-
-A _slot declaration_ introduces a new set of slots, given by a pattern. The
+A _`let` statement_ introduces a new set of variables, given by a pattern. The
 pattern may be followed by a type annotation, and/or an initializer expression.
 When no type annotation is given, the compiler will infer the type, or signal
 an error if insufficient type information is available for definite inference.
-Any slots introduced by a slot declaration are visible from the point of
+Any variables introduced by a variable declaration are visible from the point of
 declaration until the end of the enclosing block scope.
 
 ### Expression statements
@@ -2737,26 +2578,60 @@ expressions](#index-expressions) (`expr[expr]`), and [field
 references](#field-expressions) (`expr.f`). All other expressions are rvalues.
 
 The left operand of an [assignment](#assignment-expressions) or
-[compound-assignment](#compound-assignment-expressions) expression is an lvalue
-context, as is the single operand of a unary
-[borrow](#unary-operator-expressions). All other expression contexts are
-rvalue contexts.
+[compound-assignment](#compound-assignment-expressions) expression is
+an lvalue context, as is the single operand of a unary
+[borrow](#unary-operator-expressions). The discriminant or subject of
+a [match expression](#match-expressions) may be an lvalue context, if
+ref bindings are made, but is otherwise an rvalue context. All other
+expression contexts are rvalue contexts.
 
 When an lvalue is evaluated in an _lvalue context_, it denotes a memory
 location; when evaluated in an _rvalue context_, it denotes the value held _in_
 that memory location.
 
-When an rvalue is used in an lvalue context, a temporary un-named lvalue is
-created and used instead. A temporary's lifetime equals the largest lifetime
-of any reference that points to it.
+##### Temporary lifetimes
+
+When an rvalue is used in an lvalue context, a temporary un-named
+lvalue is created and used instead. The lifetime of temporary values
+is typically the innermost enclosing statement; the tail expression of
+a block is considered part of the statement that encloses the block.
+
+When a temporary rvalue is being created that is assigned into a `let`
+declaration, however, the temporary is created with the lifetime of
+the enclosing block instead, as using the enclosing statement (the
+`let` declaration) would be a guaranteed error (since a pointer to the
+temporary would be stored into a variable, but the temporary would be
+freed before the variable could be used). The compiler uses simple
+syntactic rules to decide which values are being assigned into a `let`
+binding, and therefore deserve a longer temporary lifetime.
+
+Here are some examples:
+
+- `let x = foo(&temp())`. The expression `temp()` is an rvalue. As it
+  is being borrowed, a temporary is created which will be freed after
+  the innermost enclosing statement (the `let` declaration, in this case).
+- `let x = temp().foo()`. This is the same as the previous example,
+  except that the value of `temp()` is being borrowed via autoref on a
+  method-call. Here we are assuming that `foo()` is an `&self` method
+  defined in some trait, say `Foo`. In other words, the expression
+  `temp().foo()` is equivalent to `Foo::foo(&temp())`.
+- `let x = &temp()`. Here, the same temporary is being assigned into
+  `x`, rather than being passed as a parameter, and hence the
+  temporary's lifetime is considered to be the enclosing block.
+- `let x = SomeStruct { foo: &temp() }`. As in the previous case, the
+  temporary is assigned into a struct which is then assigned into a
+  binding, and hence it is given the lifetime of the enclosing block.
+- `let x = [ &temp() ]`. As in the previous case, the
+  temporary is assigned into an array which is then assigned into a
+  binding, and hence it is given the lifetime of the enclosing block.
+- `let ref x = temp()`. In this case, the temporary is created using a ref binding,
+  but the result is the same: the lifetime is extended to the enclosing block.
 
 #### Moved and copied types
 
-When a [local variable](#memory-slots) is used as an
-[rvalue](#lvalues,-rvalues-and-temporaries) the variable will either be moved
-or copied, depending on its type. For types that contain [owning
-pointers](#pointer-types) or values that implement the special trait `Drop`,
-the variable is moved. All other types are copied.
+When a [local variable](#variables) is used as an
+[rvalue](#lvalues-rvalues-and-temporaries), the variable will be copied
+if its type implements `Copy`. All others are moved.
 
 ### Literal expressions
 
@@ -2774,7 +2649,7 @@ value, or the unit value.
 ### Path expressions
 
 A [path](#paths) used as an expression context denotes either a local variable
-or an item. Path expressions are [lvalues](#lvalues,-rvalues-and-temporaries).
+or an item. Path expressions are [lvalues](#lvalues-rvalues-and-temporaries).
 
 ### Tuple expressions
 
@@ -2782,115 +2657,106 @@ Tuples are written by enclosing zero or more comma-separated expressions in
 parentheses. They are used to create [tuple-typed](#tuple-types) values.
 
 ```{.tuple}
-(0,);
 (0.0, 4.5);
-("a", 4u, true);
+("a", 4usize, true);
 ```
 
-### Unit expressions
+You can disambiguate a single-element tuple from a value in parentheses with a
+comma:
 
-The expression `()` denotes the _unit value_, the only value of the type with
-the same name.
-
-### Structure expressions
-
-```{.ebnf .gram}
-struct_expr : expr_path '{' ident ':' expr
-                      [ ',' ident ':' expr ] *
-                      [ ".." expr ] '}' |
-              expr_path '(' expr
-                      [ ',' expr ] * ')' |
-              expr_path ;
+```
+(0,); // single-element tuple
+(0); // zero in parentheses
 ```
 
-There are several forms of structure expressions. A _structure expression_
-consists of the [path](#paths) of a [structure item](#structures), followed by
-a brace-enclosed list of one or more comma-separated name-value pairs,
-providing the field values of a new instance of the structure. A field name
+### Struct expressions
+
+There are several forms of struct expressions. A _struct expression_
+consists of the [path](#paths) of a [struct item](#structs), followed by
+a brace-enclosed list of zero or more comma-separated name-value pairs,
+providing the field values of a new instance of the struct. A field name
 can be any identifier, and is separated from its value expression by a colon.
-The location denoted by a structure field is mutable if and only if the
-enclosing structure is mutable.
+The location denoted by a struct field is mutable if and only if the
+enclosing struct is mutable.
 
-A _tuple structure expression_ consists of the [path](#paths) of a [structure
-item](#structures), followed by a parenthesized list of one or more
-comma-separated expressions (in other words, the path of a structure item
-followed by a tuple expression). The structure item must be a tuple structure
+A _tuple struct expression_ consists of the [path](#paths) of a [struct
+item](#structs), followed by a parenthesized list of one or more
+comma-separated expressions (in other words, the path of a struct item
+followed by a tuple expression). The struct item must be a tuple struct
 item.
 
-A _unit-like structure expression_ consists only of the [path](#paths) of a
-[structure item](#structures).
+A _unit-like struct expression_ consists only of the [path](#paths) of a
+[struct item](#structs).
 
-The following are examples of structure expressions:
+The following are examples of struct expressions:
 
 ```
 # struct Point { x: f64, y: f64 }
+# struct NothingInMe { }
 # struct TuplePoint(f64, f64);
-# mod game { pub struct User<'a> { pub name: &'a str, pub age: uint, pub score: uint } }
+# mod game { pub struct User<'a> { pub name: &'a str, pub age: u32, pub score: usize } }
 # struct Cookie; fn some_fn<T>(t: T) {}
 Point {x: 10.0, y: 20.0};
+NothingInMe {};
 TuplePoint(10.0, 20.0);
 let u = game::User {name: "Joe", age: 35, score: 100_000};
 some_fn::<Cookie>(Cookie);
 ```
 
-A structure expression forms a new value of the named structure type. Note
-that for a given *unit-like* structure type, this will always be the same
+A struct expression forms a new value of the named struct type. Note
+that for a given *unit-like* struct type, this will always be the same
 value.
 
-A structure expression can terminate with the syntax `..` followed by an
+A struct expression can terminate with the syntax `..` followed by an
 expression to denote a functional update. The expression following `..` (the
-base) must have the same structure type as the new structure type being formed.
-The entire expression denotes the result of constructing a new structure (with
+base) must have the same struct type as the new struct type being formed.
+The entire expression denotes the result of constructing a new struct (with
 the same type as the base expression) with the given values for the fields that
 were explicitly specified and the values in the base expression for all other
 fields.
 
 ```
-# struct Point3d { x: int, y: int, z: int }
+# struct Point3d { x: i32, y: i32, z: i32 }
 let base = Point3d {x: 1, y: 2, z: 3};
 Point3d {y: 0, z: 10, .. base};
 ```
 
 ### Block expressions
 
-```{.ebnf .gram}
-block_expr : '{' [ view_item ] *
-                 [ stmt ';' | item ] *
-                 [ expr ] '}' ;
-```
-
 A _block expression_ is similar to a module in terms of the declarations that
-are possible. Each block conceptually introduces a new namespace scope. View
+are possible. Each block conceptually introduces a new namespace scope. Use
 items can bring new names into scopes and declared items are in scope for only
 the block itself.
 
 A block will execute each statement sequentially, and then execute the
-expression (if given). If the final expression is omitted, the type and return
-value of the block are `()`, but if it is provided, the type and return value
-of the block are that of the expression itself.
+expression (if given). If the block ends in a statement, its value is `()`:
+
+```
+let x: () = { println!("Hello."); };
+```
+
+If it ends in an expression, its value and type are that of the expression:
+
+```
+let x: i32 = { println!("Hello."); 5 };
+
+assert_eq!(5, x);
+```
 
 ### Method-call expressions
-
-```{.ebnf .gram}
-method_call_expr : expr '.' ident paren_expr_list ;
-```
 
 A _method call_ consists of an expression followed by a single dot, an
 identifier, and a parenthesized expression-list. Method calls are resolved to
 methods on specific traits, either statically dispatching to a method if the
 exact `self`-type of the left-hand-side is known, or dynamically dispatching if
-the left-hand-side expression is an indirect [object type](#object-types).
+the left-hand-side expression is an indirect [trait object](#trait-objects).
 
 ### Field expressions
-
-```{.ebnf .gram}
-field_expr : expr '.' ident ;
-```
 
 A _field expression_ consists of an expression followed by a single dot and an
 identifier, when not immediately followed by a parenthesized expression-list
 (the latter is a [method call expression](#method-call-expressions)). A field
-expression denotes a field of a [structure](#structure-types).
+expression denotes a field of a [struct](#struct-types).
 
 ```{.ignore .field}
 mystruct.myfield;
@@ -2898,89 +2764,132 @@ foo().x;
 (Struct {a: 10, b: 20}).a;
 ```
 
-A field access is an [lvalue](#lvalues,-rvalues-and-temporaries) referring to
+A field access is an [lvalue](#lvalues-rvalues-and-temporaries) referring to
 the value of that field. When the type providing the field inherits mutability,
 it can be [assigned](#assignment-expressions) to.
 
-Also, if the type of the expression to the left of the dot is a pointer, it is
-automatically dereferenced to make the field access possible.
+Also, if the type of the expression to the left of the dot is a
+pointer, it is automatically dereferenced as many times as necessary
+to make the field access possible. In cases of ambiguity, we prefer
+fewer autoderefs to more.
 
 ### Array expressions
 
-```{.ebnf .gram}
-array_expr : '[' "mut" ? vec_elems? ']' ;
-
-array_elems : [expr [',' expr]*] | [expr ',' ".." expr] ;
-```
-
-An [array](#array,-and-slice-types) _expression_ is written by enclosing zero
+An [array](#array-and-slice-types) _expression_ is written by enclosing zero
 or more comma-separated expressions of uniform type in square brackets.
 
-In the `[expr ',' ".." expr]` form, the expression after the `".."` must be a
+In the `[expr ';' expr]` form, the expression after the `';'` must be a
 constant expression that can be evaluated at compile time, such as a
 [literal](#literals) or a [static item](#static-items).
 
 ```
-[1i, 2, 3, 4];
+[1, 2, 3, 4];
 ["a", "b", "c", "d"];
-[0i, ..128];             // array with 128 zeros
+[0; 128];              // array with 128 zeros
 [0u8, 0u8, 0u8, 0u8];
 ```
 
 ### Index expressions
 
-```{.ebnf .gram}
-idx_expr : expr '[' expr ']' ;
-```
-
-[Array](#array,-and-slice-types)-typed expressions can be indexed by
+[Array](#array-and-slice-types)-typed expressions can be indexed by
 writing a square-bracket-enclosed expression (the index) after them. When the
-array is mutable, the resulting [lvalue](#lvalues,-rvalues-and-temporaries) can
+array is mutable, the resulting [lvalue](#lvalues-rvalues-and-temporaries) can
 be assigned to.
 
 Indices are zero-based, and may be of any integral type. Vector access is
-bounds-checked at run-time. When the check fails, it will put the task in a
-_panicked state_.
+bounds-checked at compile-time for constant arrays being accessed with a constant index value.
+Otherwise a check will be performed at run-time that will put the thread in a _panicked state_ if it fails.
 
 ```{should-fail}
 ([1, 2, 3, 4])[0];
-(["a", "b"])[10]; // panics
+
+let x = (["a", "b"])[10]; // compiler error: const index-expr is out of bounds
+
+let n = 10;
+let y = (["a", "b"])[n]; // panics
+
+let arr = ["a", "b"];
+arr[10]; // panics
+```
+
+Also, if the type of the expression to the left of the brackets is a
+pointer, it is automatically dereferenced as many times as necessary
+to make the indexing possible. In cases of ambiguity, we prefer fewer
+autoderefs to more.
+
+### Range expressions
+
+The `..` operator will construct an object of one of the `std::ops::Range` variants.
+
+```
+1..2;   // std::ops::Range
+3..;    // std::ops::RangeFrom
+..4;    // std::ops::RangeTo
+..;     // std::ops::RangeFull
+```
+
+The following expressions are equivalent.
+
+```
+let x = std::ops::Range {start: 0, end: 10};
+let y = 0..10;
+
+assert_eq!(x, y);
+```
+
+Similarly, the `...` operator will construct an object of one of the
+`std::ops::RangeInclusive` variants.
+
+```
+# #![feature(inclusive_range_syntax)]
+1...2;   // std::ops::RangeInclusive
+...4;    // std::ops::RangeToInclusive
+```
+
+The following expressions are equivalent.
+
+```
+# #![feature(inclusive_range_syntax, inclusive_range)]
+let x = std::ops::RangeInclusive::NonEmpty {start: 0, end: 10};
+let y = 0...10;
+
+assert_eq!(x, y);
 ```
 
 ### Unary operator expressions
 
-Rust defines six symbolic unary operators. They are all written as prefix
-operators, before the expression they apply to.
+Rust defines the following unary operators. They are all written as prefix operators,
+before the expression they apply to.
 
 * `-`
-  : Negation. May only be applied to numeric types.
+  : Negation. Signed integer types and floating-point types support negation. It
+    is an error to apply negation to unsigned types; for example, the compiler
+    rejects `-1u32`.
 * `*`
   : Dereference. When applied to a [pointer](#pointer-types) it denotes the
     pointed-to location. For pointers to mutable locations, the resulting
-    [lvalue](#lvalues,-rvalues-and-temporaries) can be assigned to.
+    [lvalue](#lvalues-rvalues-and-temporaries) can be assigned to.
     On non-pointer types, it calls the `deref` method of the `std::ops::Deref`
     trait, or the `deref_mut` method of the `std::ops::DerefMut` trait (if
     implemented by the type and required for an outer expression that will or
     could mutate the dereference), and produces the result of dereferencing the
     `&` or `&mut` borrowed pointer returned from the overload method.
-
 * `!`
   : Logical negation. On the boolean type, this flips between `true` and
     `false`. On integer types, this inverts the individual bits in the
     two's complement representation of the value.
-* `box`
-  : [Boxing](#pointer-types) operators. Allocate a box to hold the value they
-    are applied to, and store the value in it. `box` creates a box.
-* `&`
-  : Borrow operator. Returns a reference, pointing to its operand. The operand
-    of a borrow is statically proven to outlive the resulting pointer. If the
-    borrow-checker cannot prove this, it is a compilation error.
+* `&` and `&mut`
+  : Borrowing. When applied to an lvalue, these operators produce a
+    reference (pointer) to the lvalue. The lvalue is also placed into
+    a borrowed state for the duration of the reference. For a shared
+    borrow (`&`), this implies that the lvalue may not be mutated, but
+    it may be read or shared again. For a mutable borrow (`&mut`), the
+    lvalue may not be accessed in any way until the borrow expires.
+    If the `&` or `&mut` operators are applied to an rvalue, a
+    temporary value is created; the lifetime of this temporary value
+    is defined by [syntactic rules](#temporary-lifetimes).
 
 ### Binary operator expressions
-
-```{.ebnf .gram}
-binop_expr : expr binop expr ;
-```
 
 Binary operators expressions are given in terms of [operator
 precedence](#operator-precedence).
@@ -3013,22 +2922,24 @@ meaning of the operators on standard types is given here.
 Like the [arithmetic operators](#arithmetic-operators), bitwise operators are
 syntactic sugar for calls to methods of built-in traits. This means that
 bitwise operators can be overridden for user-defined types. The default
-meaning of the operators on standard types is given here.
+meaning of the operators on standard types is given here. Bitwise `&`, `|` and
+`^` applied to boolean arguments are equivalent to logical `&&`, `||` and `!=`
+evaluated in non-lazy fashion.
 
 * `&`
-  : And.
+  : Bitwise AND.
     Calls the `bitand` method of the `std::ops::BitAnd` trait.
 * `|`
-  : Inclusive or.
+  : Bitwise inclusive OR.
     Calls the `bitor` method of the `std::ops::BitOr` trait.
 * `^`
-  : Exclusive or.
+  : Bitwise exclusive OR.
     Calls the `bitxor` method of the `std::ops::BitXor` trait.
 * `<<`
-  : Logical left shift.
+  : Left shift.
     Calls the `shl` method of the `std::ops::Shl` trait.
 * `>>`
-  : Logical right shift.
+  : Right shift (arithmetic).
     Calls the `shr` method of the `std::ops::Shr` trait.
 
 #### Lazy boolean operators
@@ -3075,37 +2986,39 @@ A type cast expression is denoted with the binary operator `as`.
 Executing an `as` expression casts the value on the left-hand side to the type
 on the right-hand side.
 
-A numeric value can be cast to any numeric type. A raw pointer value can be
-cast to or from any integral type or raw pointer type. Any other cast is
-unsupported and will fail to compile.
-
 An example of an `as` expression:
 
 ```
-# fn sum(v: &[f64]) -> f64 { 0.0 }
-# fn len(v: &[f64]) -> int { 0 }
+# fn sum(values: &[f64]) -> f64 { 0.0 }
+# fn len(values: &[f64]) -> i32 { 0 }
 
-fn avg(v: &[f64]) -> f64 {
-  let sum: f64 = sum(v);
-  let sz: f64 = len(v) as f64;
-  return sum / sz;
+fn average(values: &[f64]) -> f64 {
+    let sum: f64 = sum(values);
+    let size: f64 = len(values) as f64;
+    sum / size
 }
 ```
+
+Some of the conversions which can be done through the `as` operator
+can also be done implicitly at various points in the program, such as
+argument passing and assignment to a `let` binding with an explicit
+type. Implicit conversions are limited to "harmless" conversions that
+do not lose information and which have minimal or no risk of
+surprising side-effects on the dynamic execution semantics.
 
 #### Assignment expressions
 
 An _assignment expression_ consists of an
-[lvalue](#lvalues,-rvalues-and-temporaries) expression followed by an equals
-sign (`=`) and an [rvalue](#lvalues,-rvalues-and-temporaries) expression.
+[lvalue](#lvalues-rvalues-and-temporaries) expression followed by an equals
+sign (`=`) and an [rvalue](#lvalues-rvalues-and-temporaries) expression.
 
 Evaluating an assignment expression [either copies or
 moves](#moved-and-copied-types) its right-hand operand to its left-hand
 operand.
 
 ```
-# let mut x = 0i;
+# let mut x = 0;
 # let y = 0;
-
 x = y;
 ```
 
@@ -3115,7 +3028,7 @@ The `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, and `>>` operators may be
 composed with the `=` operator. The expression `lval OP= val` is equivalent to
 `lval = lval OP val`. For example, `x = x + 1` may be written as `x += 1`.
 
-Any such expression always has the [`unit`](#primitive-types) type.
+Any such expression always has the [`unit`](#tuple-types) type.
 
 #### Operator precedence
 
@@ -3123,17 +3036,18 @@ The precedence of Rust binary operators is ordered as follows, going from
 strong to weak:
 
 ```{.text .precedence}
+as :
 * / %
-as
 + -
 << >>
 &
 ^
 |
-< > <= >=
-== !=
+== != < > <= >=
 &&
 ||
+.. ...
+<-
 =
 ```
 
@@ -3147,45 +3061,29 @@ An expression enclosed in parentheses evaluates to the result of the enclosed
 expression. Parentheses can be used to explicitly specify evaluation order
 within an expression.
 
-```{.ebnf .gram}
-paren_expr : '(' expr ')' ;
-```
-
 An example of a parenthesized expression:
 
 ```
-let x: int = (2 + 3) * 4;
+let x: i32 = (2 + 3) * 4;
 ```
 
 
 ### Call expressions
 
-```{.ebnf .gram}
-expr_list : [ expr [ ',' expr ]* ] ? ;
-paren_expr_list : '(' expr_list ')' ;
-call_expr : expr paren_expr_list ;
-```
-
-A _call expression_ invokes a function, providing zero or more input slots and
-an optional reference slot to serve as the function's output, bound to the
-`lval` on the right hand side of the call. If the function eventually returns,
-then the expression completes.
+A _call expression_ invokes a function, providing zero or more input variables
+and an optional location to move the function's output into. If the function
+eventually returns, then the expression completes.
 
 Some examples of call expressions:
 
 ```
-# fn add(x: int, y: int) -> int { 0 }
+# fn add(x: i32, y: i32) -> i32 { 0 }
 
-let x: int = add(1, 2);
-let pi: Option<f32> = from_str("3.14");
+let x: i32 = add(1i32, 2i32);
+let pi: Result<f32, _> = "3.14".parse();
 ```
 
 ### Lambda expressions
-
-```{.ebnf .gram}
-ident_list : [ ident [ ',' ident ]* ] ? ;
-lambda_expr : '|' ident_list '|' expr ;
-```
 
 A _lambda expression_ (sometimes called an "anonymous function expression")
 defines a function and denotes it as a value, in a single expression. A lambda
@@ -3208,29 +3106,55 @@ the simplest and least-expensive form (analogous to a ```|| { }``` expression),
 the lambda expression captures its environment by reference, effectively
 borrowing pointers to all outer variables mentioned inside the function.
 Alternately, the compiler may infer that a lambda expression should copy or
-move values (depending on their type.) from the environment into the lambda
+move values (depending on their type) from the environment into the lambda
 expression's captured environment.
 
 In this example, we define a function `ten_times` that takes a higher-order
-function argument, and call it with a lambda expression as an argument.
+function argument, and we then call it with a lambda expression as an argument:
 
 ```
-fn ten_times(f: |int|) {
-    let mut i = 0;
-    while i < 10 {
-        f(i);
-        i += 1;
+fn ten_times<F>(f: F) where F: Fn(i32) {
+    for index in 0..10 {
+        f(index);
     }
 }
 
 ten_times(|j| println!("hello, {}", j));
 ```
 
-### While loops
+### Infinite loops
 
-```{.ebnf .gram}
-while_expr : "while" no_struct_literal_expr '{' block '}' ;
-```
+A `loop` expression denotes an infinite loop.
+
+A `loop` expression may optionally have a _label_. The label is written as
+a lifetime preceding the loop expression, as in `'foo: loop{ }`. If a
+label is present, then labeled `break` and `continue` expressions nested
+within this loop may exit out of this loop or return control to its head.
+See [break expressions](#break-expressions) and [continue
+expressions](#continue-expressions).
+
+### `break` expressions
+
+A `break` expression has an optional _label_. If the label is absent, then
+executing a `break` expression immediately terminates the innermost loop
+enclosing it. It is only permitted in the body of a loop. If the label is
+present, then `break 'foo` terminates the loop with label `'foo`, which need not
+be the innermost label enclosing the `break` expression, but must enclose it.
+
+### `continue` expressions
+
+A `continue` expression has an optional _label_. If the label is absent, then
+executing a `continue` expression immediately terminates the current iteration
+of the innermost loop enclosing it, returning control to the loop *head*. In
+the case of a `while` loop, the head is the conditional expression controlling
+the loop. In the case of a `for` loop, the head is the call-expression
+controlling the loop. If the label is present, then `continue 'foo` returns
+control to the head of the loop with label `'foo`, which need not be the
+innermost label enclosing the `continue` expression, but must enclose it.
+
+A `continue` expression is only permitted in the body of a loop.
+
+### `while` loops
 
 A `while` loop begins by evaluating the boolean loop conditional expression.
 If the loop conditional expression evaluates to `true`, the loop body block
@@ -3240,7 +3164,7 @@ conditional expression evaluates to `false`, the `while` expression completes.
 An example:
 
 ```
-let mut i = 0u;
+let mut i = 0;
 
 while i < 10 {
     println!("hello");
@@ -3248,92 +3172,47 @@ while i < 10 {
 }
 ```
 
-### Infinite loops
+Like `loop` expressions, `while` loops can be controlled with `break` or
+`continue`, and may optionally have a _label_. See [infinite
+loops](#infinite-loops), [break expressions](#break-expressions), and
+[continue expressions](#continue-expressions) for more information.
 
-A `loop` expression denotes an infinite loop.
-
-```{.ebnf .gram}
-loop_expr : [ lifetime ':' ] "loop" '{' block '}';
-```
-
-A `loop` expression may optionally have a _label_. If a label is present, then
-labeled `break` and `continue` expressions nested within this loop may exit out
-of this loop or return control to its head. See [Break
-expressions](#break-expressions) and [Continue
-expressions](#continue-expressions).
-
-### Break expressions
-
-```{.ebnf .gram}
-break_expr : "break" [ lifetime ];
-```
-
-A `break` expression has an optional _label_. If the label is absent, then
-executing a `break` expression immediately terminates the innermost loop
-enclosing it. It is only permitted in the body of a loop. If the label is
-present, then `break foo` terminates the loop with label `foo`, which need not
-be the innermost label enclosing the `break` expression, but must enclose it.
-
-### Continue expressions
-
-```{.ebnf .gram}
-continue_expr : "continue" [ lifetime ];
-```
-
-A `continue` expression has an optional _label_. If the label is absent, then
-executing a `continue` expression immediately terminates the current iteration
-of the innermost loop enclosing it, returning control to the loop *head*. In
-the case of a `while` loop, the head is the conditional expression controlling
-the loop. In the case of a `for` loop, the head is the call-expression
-controlling the loop. If the label is present, then `continue foo` returns
-control to the head of the loop with label `foo`, which need not be the
-innermost label enclosing the `break` expression, but must enclose it.
-
-A `continue` expression is only permitted in the body of a loop.
-
-### For expressions
-
-```{.ebnf .gram}
-for_expr : "for" pat "in" no_struct_literal_expr '{' block '}' ;
-```
+### `for` expressions
 
 A `for` expression is a syntactic construct for looping over elements provided
-by an implementation of `std::iter::Iterator`.
+by an implementation of `std::iter::IntoIterator`.
 
-An example of a for loop over the contents of an array:
+An example of a `for` loop over the contents of an array:
 
 ```
-# type Foo = int;
-# fn bar(f: Foo) { }
+# type Foo = i32;
+# fn bar(f: &Foo) { }
 # let a = 0;
 # let b = 0;
 # let c = 0;
 
 let v: &[Foo] = &[a, b, c];
 
-for e in v.iter() {
-    bar(*e);
+for e in v {
+    bar(e);
 }
 ```
 
 An example of a for loop over a series of integers:
 
 ```
-# fn bar(b:uint) { }
-for i in range(0u, 256) {
+# fn bar(b:usize) { }
+for i in 0..256 {
     bar(i);
 }
 ```
 
-### If expressions
+Like `loop` expressions, `for` loops can be controlled with `break` or
+`continue`, and may optionally have a _label_. See [infinite
+loops](#infinite-loops), [break expressions](#break-expressions), and
+[continue expressions](#continue-expressions) for more information.
 
-```{.ebnf .gram}
-if_expr : "if" no_struct_literal_expr '{' block '}'
-          else_tail ? ;
-
-else_tail : "else" [ if_expr | if_let_expr
-                   | '{' block '}' ] ;
-```
+### `if` expressions
 
 An `if` expression is a conditional branch in program control. The form of an
 `if` expression is a condition expression, followed by a consequent block, any
@@ -3345,19 +3224,11 @@ evaluates to `false`, the consequent block is skipped and any subsequent `else
 if` condition is evaluated. If all `if` and `else if` conditions evaluate to
 `false` then any `else` block is executed.
 
-### Match expressions
-
-```{.ebnf .gram}
-match_expr : "match" no_struct_literal_expr '{' match_arm * '}' ;
-
-match_arm : attribute * match_pat "=>" [ expr "," | '{' block '}' ] ;
-
-match_pat : pat [ '|' pat ] * [ "if" expr ] ? ;
-```
+### `match` expressions
 
 A `match` expression branches on a *pattern*. The exact form of matching that
 occurs depends on the pattern. Patterns consist of some combination of
-literals, destructured arrays or enum constructors, structures and tuples,
+literals, destructured arrays or enum constructors, structs and tuples,
 variable binding specifications, wildcards (`..`), and placeholders (`_`). A
 `match` expression has a *head expression*, which is the value to compare to
 the patterns. The type of the patterns must equal the type of the head
@@ -3365,54 +3236,10 @@ expression.
 
 In a pattern whose head expression has an `enum` type, a placeholder (`_`)
 stands for a *single* data field, whereas a wildcard `..` stands for *all* the
-fields of a particular variant. For example:
-
-```
-enum List<X> { Nil, Cons(X, Box<List<X>>) }
-
-let x: List<int> = List::Cons(10, box List::Cons(11, box List::Nil));
-
-match x {
-    List::Cons(_, box List::Nil) => panic!("singleton list"),
-    List::Cons(..)               => return,
-    List::Nil                    => panic!("empty list")
-}
-```
-
-The first pattern matches lists constructed by applying `Cons` to any head
-value, and a tail value of `box Nil`. The second pattern matches _any_ list
-constructed with `Cons`, ignoring the values of its arguments. The difference
-between `_` and `..` is that the pattern `C(_)` is only type-correct if `C` has
-exactly one argument, while the pattern `C(..)` is type-correct for any enum
-variant `C`, regardless of how many arguments `C` has.
-
-Used inside an array pattern, `..` stands for any number of elements, when the
-`advanced_slice_patterns` feature gate is turned on. This wildcard can be used
-at most once for a given array, which implies that it cannot be used to
-specifically match elements that are at an unknown distance from both ends of a
-array, like `[.., 42, ..]`. If followed by a variable name, it will bind the
-corresponding slice to the variable. Example:
-
-```
-# #![feature(advanced_slice_patterns)]
-fn is_symmetric(list: &[uint]) -> bool {
-    match list {
-        [] | [_]                   => true,
-        [x, inside.., y] if x == y => is_symmetric(inside),
-        _                          => false
-    }
-}
-
-fn main() {
-    let sym     = &[0, 1, 4, 2, 4, 1, 0];
-    let not_sym = &[0, 1, 7, 2, 4, 1, 0];
-    assert!(is_symmetric(sym));
-    assert!(!is_symmetric(not_sym));
-}
-```
+fields of a particular variant.
 
 A `match` behaves differently depending on whether or not the head expression
-is an [lvalue or an rvalue](#lvalues,-rvalues-and-temporaries). If the head
+is an [lvalue or an rvalue](#lvalues-rvalues-and-temporaries). If the head
 expression is an rvalue, it is first evaluated into a temporary location, and
 the resulting value is sequentially compared to the patterns in the arms until
 a match is found. The first arm with a matching pattern is chosen as the branch
@@ -3428,26 +3255,15 @@ the inside of the match.
 An example of a `match` expression:
 
 ```
-# fn process_pair(a: int, b: int) { }
-# fn process_ten() { }
-
-enum List<X> { Nil, Cons(X, Box<List<X>>) }
-
-let x: List<int> = List::Cons(10, box List::Cons(11, box List::Nil));
+let x = 1;
 
 match x {
-    List::Cons(a, box List::Cons(b, _)) => {
-        process_pair(a, b);
-    }
-    List::Cons(10, _) => {
-        process_ten();
-    }
-    List::Nil => {
-        return;
-    }
-    _ => {
-        panic!();
-    }
+    1 => println!("one"),
+    2 => println!("two"),
+    3 => println!("three"),
+    4 => println!("four"),
+    5 => println!("five"),
+    _ => println!("something else"),
 }
 ```
 
@@ -3460,58 +3276,36 @@ Subpatterns can also be bound to variables by the use of the syntax `variable @
 subpattern`. For example:
 
 ```
-enum List { Nil, Cons(uint, Box<List>) }
+let x = 1;
 
-fn is_sorted(list: &List) -> bool {
-    match *list {
-        List::Nil | List::Cons(_, box List::Nil) => true,
-        List::Cons(x, ref r @ box List::Cons(_, _)) => {
-            match *r {
-                box List::Cons(y, _) => (x <= y) && is_sorted(&**r),
-                _ => panic!()
-            }
-        }
-    }
+match x {
+    e @ 1 ... 5 => println!("got a range element {}", e),
+    _ => println!("anything"),
 }
-
-fn main() {
-    let a = List::Cons(6, box List::Cons(7, box List::Cons(42, box List::Nil)));
-    assert!(is_sorted(&a));
-}
-
 ```
 
-Patterns can also dereference pointers by using the `&`, `box` symbols,
-as appropriate. For example, these two matches on `x: &int` are equivalent:
+Patterns can also dereference pointers by using the `&`, `&mut` and `box`
+symbols, as appropriate. For example, these two matches on `x: &i32` are
+equivalent:
 
 ```
-# let x = &3i;
+# let x = &3;
 let y = match *x { 0 => "zero", _ => "some" };
 let z = match x { &0 => "zero", _ => "some" };
 
 assert_eq!(y, z);
 ```
 
-A pattern that's just an identifier, like `Nil` in the previous example, could
-either refer to an enum variant that's in scope, or bind a new variable. The
-compiler resolves this ambiguity by forbidding variable bindings that occur in
-`match` patterns from shadowing names of variants that are in scope. For
-example, wherever `List` is in scope, a `match` pattern would not be able to
-bind `Nil` as a new name. The compiler interprets a variable pattern `x` as a
-binding _only_ if there is no variant named `x` in scope. A convention you can
-use to avoid conflicts is simply to name variants with upper-case letters, and
-local variables with lower-case letters.
-
 Multiple match patterns may be joined with the `|` operator. A range of values
 may be specified with `...`. For example:
 
 ```
-# let x = 2i;
+# let x = 2;
 
 let message = match x {
-  0 | 1  => "not many",
-  2 ... 9 => "a few",
-  _      => "lots"
+    0 | 1  => "not many",
+    2 ... 9 => "a few",
+    _      => "lots"
 };
 ```
 
@@ -3526,60 +3320,61 @@ may refer to the variables bound within the pattern they follow.
 
 ```
 # let maybe_digit = Some(0);
-# fn process_digit(i: int) { }
-# fn process_other(i: int) { }
+# fn process_digit(i: i32) { }
+# fn process_other(i: i32) { }
 
 let message = match maybe_digit {
-  Some(x) if x < 10 => process_digit(x),
-  Some(x) => process_other(x),
-  None => panic!()
+    Some(x) if x < 10 => process_digit(x),
+    Some(x) => process_other(x),
+    None => panic!(),
 };
 ```
 
-### If let expressions
+### `if let` expressions
 
-```{.ebnf .gram}
-if_let_expr : "if" "let" pat '=' expr '{' block '}'
-               else_tail ? ;
-else_tail : "else" [ if_expr | if_let_expr | '{' block '}' ] ;
+An `if let` expression is semantically identical to an `if` expression but in
+place of a condition expression it expects a `let` statement with a refutable
+pattern. If the value of the expression on the right hand side of the `let`
+statement matches the pattern, the corresponding block will execute, otherwise
+flow proceeds to the first `else` block that follows.
+
+```
+let dish = ("Ham", "Eggs");
+
+// this body will be skipped because the pattern is refuted
+if let ("Bacon", b) = dish {
+    println!("Bacon is served with {}", b);
+}
+
+// this body will execute
+if let ("Ham", b) = dish {
+    println!("Ham is served with {}", b);
+}
 ```
 
-An `if let` expression is semantically identical to an `if` expression but in place
-of a condition expression it expects a refutable let statement. If the value of the
-expression on the right hand side of the let statement matches the pattern, the corresponding
-block will execute, otherwise flow proceeds to the first `else` block that follows.
+### `while let` loops
 
-### While let loops
+A `while let` loop is semantically identical to a `while` loop but in place of
+a condition expression it expects `let` statement with a refutable pattern. If
+the value of the expression on the right hand side of the `let` statement
+matches the pattern, the loop body block executes and control returns to the
+pattern matching statement. Otherwise, the while expression completes.
 
-```{.ebnf .gram}
-while_let_expr : "while" "let" pat '=' expr '{' block '}' ;
-```
-
-A `while let` loop is semantically identical to a `while` loop but in place of a
-condition expression it expects a refutable let statement. If the value of the
-expression on the right hand side of the let statement matches the pattern, the
-loop body block executes and control returns to the pattern matching statement.
-Otherwise, the while expression completes.
-
-### Return expressions
-
-```{.ebnf .gram}
-return_expr : "return" expr ? ;
-```
+### `return` expressions
 
 Return expressions are denoted with the keyword `return`. Evaluating a `return`
-expression moves its argument into the output slot of the current function,
-destroys the current function activation frame, and transfers control to the
-caller frame.
+expression moves its argument into the designated output location for the
+current function call, destroys the current function activation frame, and
+transfers control to the caller frame.
 
 An example of a `return` expression:
 
 ```
-fn max(a: int, b: int) -> int {
-   if a > b {
-      return a;
-   }
-   return b;
+fn max(a: i32, b: i32) -> i32 {
+    if a > b {
+        return a;
+    }
+    return b;
 }
 ```
 
@@ -3587,7 +3382,7 @@ fn max(a: int, b: int) -> int {
 
 ## Types
 
-Every slot, item and value in a Rust program has a type. The _type_ of a
+Every variable, item and value in a Rust program has a type. The _type_ of a
 *value* defines the interpretation of the memory holding it.
 
 Built-in types and type-constructors are tightly integrated into the language,
@@ -3598,16 +3393,13 @@ User-defined types have limited capabilities.
 
 The primitive types are the following:
 
-* The "unit" type `()`, having the single "unit" value `()` (occasionally called
-  "nil"). [^unittype]
 * The boolean type `bool` with values `true` and `false`.
-* The machine types.
-* The machine-dependent integer and floating-point types.
-
-[^unittype]: The "unit" value `()` is *not* a sentinel "null pointer" value for
-    reference slots; the "unit" type is the implicit return type from functions
-    otherwise lacking a return type, and can be used in other contexts (such as
-    message-sending or type-parametric code) as a zero-size type.]
+* The machine types (integer and floating-point).
+* The machine-dependent integer types.
+* Arrays
+* Tuples
+* Slices
+* Function pointers
 
 #### Machine types
 
@@ -3627,12 +3419,12 @@ The machine types are the following:
 
 #### Machine-dependent integer types
 
-The `uint` type is an unsigned integer type with the same number of bits as the
+The `usize` type is an unsigned integer type with the same number of bits as the
 platform's pointer type. It can represent every memory address in the process.
 
-The `int` type is a signed integer type with the same number of bits as the
+The `isize` type is a signed integer type with the same number of bits as the
 platform's pointer type. The theoretical upper bound on object and array size
-is the maximum `int` value. This ensures that `int` can be used to calculate
+is the maximum `isize` value. This ensures that `isize` can be used to calculate
 differences between pointers into an object or array and can address every byte
 within an object along with one byte past the end.
 
@@ -3641,15 +3433,15 @@ within an object along with one byte past the end.
 The types `char` and `str` hold textual data.
 
 A value of type `char` is a [Unicode scalar value](
-http://www.unicode.org/glossary/#unicode_scalar_value) (ie. a code point that
+http://www.unicode.org/glossary/#unicode_scalar_value) (i.e. a code point that
 is not a surrogate), represented as a 32-bit unsigned word in the 0x0000 to
 0xD7FF or 0xE000 to 0x10FFFF range. A `[char]` array is effectively an UCS-4 /
 UTF-32 string.
 
 A value of type `str` is a Unicode string, represented as an array of 8-bit
-unsigned bytes holding a sequence of UTF-8 codepoints. Since `str` is of
-unknown size, it is not a _first class_ type, but can only be instantiated
-through a pointer type, such as `&str` or `String`.
+unsigned bytes holding a sequence of UTF-8 code points. Since `str` is of
+unknown size, it is not a _first-class_ type, but can only be instantiated
+through a pointer type, such as `&str`.
 
 ### Tuple types
 
@@ -3660,26 +3452,31 @@ Tuple types and values are denoted by listing the types or values of their
 elements, respectively, in a parenthesized, comma-separated list.
 
 Because tuple elements don't have a name, they can only be accessed by
-pattern-matching.
-
-The members of a tuple are laid out in memory contiguously, in order specified
-by the tuple type.
+pattern-matching or by using `N` directly as a field to access the
+`N`th element.
 
 An example of a tuple type and its use:
 
 ```
-type Pair<'a> = (int, &'a str);
-let p: Pair<'static> = (10, "hello");
+type Pair<'a> = (i32, &'a str);
+let p: Pair<'static> = (10, "ten");
 let (a, b) = p;
-assert!(b != "world");
+
+assert_eq!(a, 10);
+assert_eq!(b, "ten");
+assert_eq!(p.0, 10);
+assert_eq!(p.1, "ten");
 ```
+
+For historical reasons and convenience, the tuple type with no elements (`()`)
+is often called ‘unit’ or ‘the unit type’.
 
 ### Array, and Slice types
 
 Rust has two different types for a list of items:
 
-* `[T ..N]`, an 'array'
-* `&[T]`, a 'slice'.
+* `[T; N]`, an 'array'
+* `&[T]`, a 'slice'
 
 An array has a fixed size, and can be allocated on either the stack or the
 heap.
@@ -3687,31 +3484,36 @@ heap.
 A slice is a 'view' into an array. It doesn't own the data it points
 to, it borrows it.
 
-An example of each kind:
+Examples:
 
 ```{rust}
-let vec: Vec<int>  = vec![1, 2, 3];
-let arr: [int, ..3] = [1, 2, 3];
-let s: &[int]      = vec.as_slice();
+// A stack-allocated array
+let array: [i32; 3] = [1, 2, 3];
+
+// A heap-allocated array
+let vector: Vec<i32> = vec![1, 2, 3];
+
+// A slice into an array
+let slice: &[i32] = &vector[..];
 ```
 
 As you can see, the `vec!` macro allows you to create a `Vec<T>` easily. The
 `vec!` macro is also part of the standard library, rather than the language.
 
-All in-bounds elements of arrays, and slices are always initialized, and access
+All in-bounds elements of arrays and slices are always initialized, and access
 to an array or slice is always bounds-checked.
 
-### Structure types
+### Struct types
 
 A `struct` *type* is a heterogeneous product of other types, called the
 *fields* of the type.[^structtype]
 
-[^structtype]: `struct` types are analogous `struct` types in C,
+[^structtype]: `struct` types are analogous to `struct` types in C,
     the *record* types of the ML family,
-    or the *structure* types of the Lisp family.
+    or the *struct* types of the Lisp family.
 
 New instances of a `struct` can be constructed with a [struct
-expression](#structure-expressions).
+expression](#struct-expressions).
 
 The memory layout of a `struct` is undefined by default to allow for compiler
 optimizations like field reordering, but it can be fixed with the
@@ -3720,15 +3522,15 @@ a corresponding struct *expression*; the resulting `struct` value will always
 have the same memory layout.
 
 The fields of a `struct` may be qualified by [visibility
-modifiers](#re-exporting-and-visibility), to allow access to data in a
-structure outside a module.
+modifiers](#visibility-and-privacy), to allow access to data in a
+struct outside a module.
 
-A _tuple struct_ type is just like a structure type, except that the fields are
+A _tuple struct_ type is just like a struct type, except that the fields are
 anonymous.
 
-A _unit-like struct_ type is like a structure type, except that it has no
-fields. The one value constructed by the associated [structure
-expression](#structure-expressions) is the only value that inhabits such a
+A _unit-like struct_ type is like a struct type, except that it has no
+fields. The one value constructed by the associated [struct
+expression](#struct-expressions) is the only value that inhabits such a
 type.
 
 ### Enumerated types
@@ -3755,13 +3557,13 @@ named reference to an [`enum` item](#enumerations).
 ### Recursive types
 
 Nominal types &mdash; [enumerations](#enumerated-types) and
-[structures](#structure-types) &mdash; may be recursive. That is, each `enum`
+[structs](#struct-types) &mdash; may be recursive. That is, each `enum`
 constructor or `struct` field may refer, directly or indirectly, to the
 enclosing `enum` or `struct` type itself. Such recursion has restrictions:
 
 * Recursive types must include a nominal type in the recursion
-  (not mere [type definitions](#type-definitions),
-   or other structural types such as [arrays](#array,-and-slice-types) or [tuples](#tuple-types)).
+  (not mere [type definitions](grammar.html#type-definitions),
+   or other structural types such as [arrays](#array-and-slice-types) or [tuples](#tuple-types)).
 * A recursive `enum` item must have at least one non-recursive constructor
   (in order to give the recursion a basis case).
 * The size of a recursive type must be finite;
@@ -3773,33 +3575,33 @@ An example of a *recursive* type and its use:
 
 ```
 enum List<T> {
-  Nil,
-  Cons(T, Box<List<T>>)
+    Nil,
+    Cons(T, Box<List<T>>)
 }
 
-let a: List<int> = List::Cons(7, box List::Cons(13, box List::Nil));
+let a: List<i32> = List::Cons(7, Box::new(List::Cons(13, Box::new(List::Nil))));
 ```
 
 ### Pointer types
 
 All pointers in Rust are explicit first-class values. They can be copied,
-stored into data structures, and returned from functions. There are two
+stored into data structs, and returned from functions. There are two
 varieties of pointer in Rust:
 
 * References (`&`)
   : These point to memory _owned by some other value_.
-    A reference type is written `&type` for some lifetime-variable `f`,
-    or just `&'a type` when you need an explicit lifetime.
+    A reference type is written `&type`,
+    or `&'a type` when you need to specify an explicit lifetime.
     Copying a reference is a "shallow" operation:
     it involves only copying the pointer itself.
-    Releasing a reference typically has no effect on the value it points to,
-    with the exception of temporary values, which are released when the last
-    reference to them is released.
+    Releasing a reference has no effect on the value it points to,
+    but a reference of a temporary value will keep it alive during the scope
+    of the reference itself.
 
 * Raw pointers (`*`)
   : Raw pointers are pointers without safety or liveness guarantees.
     Raw pointers are written as `*const T` or `*mut T`,
-    for example `*const int` means a raw pointer to an integer.
+    for example `*const i32` means a raw pointer to a 32-bit integer.
     Copying or dropping a raw pointer has no effect on the lifecycle of any
     other value. Dereferencing a raw pointer or converting it to any other
     pointer type is an [`unsafe` operation](#unsafe-functions).
@@ -3819,89 +3621,105 @@ or `extern`), a sequence of input types and an output type.
 An example of a `fn` type:
 
 ```
-fn add(x: int, y: int) -> int {
-  return x + y;
+fn add(x: i32, y: i32) -> i32 {
+    x + y
 }
 
 let mut x = add(5,7);
 
-type Binop<'a> = |int,int|: 'a -> int;
+type Binop = fn(i32, i32) -> i32;
 let bo: Binop = add;
 x = bo(5,7);
 ```
 
+#### Function types for specific items
+
+Internal to the compiler, there are also function types that are specific to a particular
+function item. In the following snippet, for example, the internal types of the functions
+`foo` and `bar` are different, despite the fact that they have the same signature:
+
+```
+fn foo() { }
+fn bar() { }
+```
+
+The types of `foo` and `bar` can both be implicitly coerced to the fn
+pointer type `fn()`. There is currently no syntax for unique fn types,
+though the compiler will emit a type like `fn() {foo}` in error
+messages to indicate "the unique fn type for the function `foo`".
+
 ### Closure types
 
-```{.ebnf .notation}
-closure_type := [ 'unsafe' ] [ '<' lifetime-list '>' ] '|' arg-list '|'
-                [ ':' bound-list ] [ '->' type ]
-lifetime-list := lifetime | lifetime ',' lifetime-list
-arg-list := ident ':' type | ident ':' type ',' arg-list
-bound-list := bound | bound '+' bound-list
-bound := path | lifetime
-```
+A [lambda expression](#lambda-expressions) produces a closure value with
+a unique, anonymous type that cannot be written out.
 
-The type of a closure mapping an input of type `A` to an output of type `B` is
-`|A| -> B`. A closure with no arguments or return values has type `||`.
+Depending on the requirements of the closure, its type implements one or
+more of the closure traits:
 
-An example of creating and calling a closure:
+* `FnOnce`
+  : The closure can be called once. A closure called as `FnOnce`
+    can move out values from its environment.
 
-```rust
-let captured_var = 10i;
+* `FnMut`
+  : The closure can be called multiple times as mutable. A closure called as
+    `FnMut` can mutate values from its environment. `FnMut` inherits from
+    `FnOnce` (i.e. anything implementing `FnMut` also implements `FnOnce`).
 
-let closure_no_args = || println!("captured_var={}", captured_var);
+* `Fn`
+  : The closure can be called multiple times through a shared reference.
+    A closure called as `Fn` can neither move out from nor mutate values
+    from its environment. `Fn` inherits from `FnMut`, which itself
+    inherits from `FnOnce`.
 
-let closure_args = |arg: int| -> int {
-  println!("captured_var={}, arg={}", captured_var, arg);
-  arg // Note lack of semicolon after 'arg'
-};
 
-fn call_closure(c1: ||, c2: |int| -> int) {
-  c1();
-  c2(2);
-}
+### Trait objects
 
-call_closure(closure_no_args, closure_args);
+In Rust, a type like `&SomeTrait` or `Box<SomeTrait>` is called a _trait object_.
+Each instance of a trait object includes:
 
-```
+ - a pointer to an instance of a type `T` that implements `SomeTrait`
+ - a _virtual method table_, often just called a _vtable_, which contains, for
+   each method of `SomeTrait` that `T` implements, a pointer to `T`'s
+   implementation (i.e. a function pointer).
 
-### Object types
+The purpose of trait objects is to permit "late binding" of methods. Calling a
+method on a trait object results in virtual dispatch at runtime: that is, a
+function pointer is loaded from the trait object vtable and invoked indirectly.
+The actual implementation for each vtable entry can vary on an object-by-object
+basis.
 
-Every trait item (see [traits](#traits)) defines a type with the same name as
-the trait. This type is called the _object type_ of the trait. Object types
-permit "late binding" of methods, dispatched using _virtual method tables_
-("vtables"). Whereas most calls to trait methods are "early bound" (statically
-resolved) to specific implementations at compile time, a call to a method on an
-object type is only resolved to a vtable entry at compile time. The actual
-implementation for each vtable entry can vary on an object-by-object basis.
+Note that for a trait object to be instantiated, the trait must be
+_object-safe_. Object safety rules are defined in [RFC 255].
+
+[RFC 255]: https://github.com/rust-lang/rfcs/blob/master/text/0255-object-safety.md
 
 Given a pointer-typed expression `E` of type `&T` or `Box<T>`, where `T`
 implements trait `R`, casting `E` to the corresponding pointer type `&R` or
-`Box<R>` results in a value of the _object type_ `R`. This result is
+`Box<R>` results in a value of the _trait object_ `R`. This result is
 represented as a pair of pointers: the vtable pointer for the `T`
 implementation of `R`, and the pointer value of `E`.
 
-An example of an object type:
+An example of a trait object:
 
 ```
 trait Printable {
-  fn stringify(&self) -> String;
+    fn stringify(&self) -> String;
 }
 
-impl Printable for int {
-  fn stringify(&self) -> String { self.to_string() }
+impl Printable for i32 {
+    fn stringify(&self) -> String { self.to_string() }
 }
 
 fn print(a: Box<Printable>) {
-   println!("{}", a.stringify());
+    println!("{}", a.stringify());
 }
 
 fn main() {
-   print(box 10i as Box<Printable>);
+    print(Box::new(10) as Box<Printable>);
 }
 ```
 
-In this example, the trait `Printable` occurs as an object type in both the
+In this example, the trait `Printable` occurs as a trait object in both the
 type signature of `print`, and the cast expression in `main`.
 
 ### Type parameters
@@ -3910,28 +3728,29 @@ Within the body of an item that has type parameter declarations, the names of
 its type parameters are types:
 
 ```ignore
-fn map<A: Clone, B: Clone>(f: |A| -> B, xs: &[A]) -> Vec<B> {
-    if xs.len() == 0 {
-       return vec![];
+fn to_vec<A: Clone>(xs: &[A]) -> Vec<A> {
+    if xs.is_empty() {
+        return vec![];
     }
-    let first: B = f(xs[0].clone());
-    let mut rest: Vec<B> = map(f, xs.slice(1, xs.len()));
+    let first: A = xs[0].clone();
+    let mut rest: Vec<A> = to_vec(&xs[1..]);
     rest.insert(0, first);
-    return rest;
+    rest
 }
 ```
 
-Here, `first` has type `B`, referring to `map`'s `B` type parameter; and `rest`
-has type `Vec<B>`, a vector type with element type `B`.
+Here, `first` has type `A`, referring to `to_vec`'s `A` type parameter; and `rest`
+has type `Vec<A>`, a vector with element type `A`.
 
 ### Self types
 
-The special type `self` has a meaning within methods inside an impl item. It
-refers to the type of the implicit `self` argument. For example, in:
+The special type `Self` has a meaning within traits and impls. In a trait definition, it refers
+to an implicit type parameter representing the "implementing" type. In an impl,
+it is an alias for the implementing type. For example, in:
 
 ```
 trait Printable {
-  fn make_string(&self) -> String;
+    fn make_string(&self) -> String;
 }
 
 impl Printable for String {
@@ -3941,80 +3760,211 @@ impl Printable for String {
 }
 ```
 
-`self` refers to the value of type `String` that is the receiver for a call to
-the method `make_string`.
+The notation `&self` is a shorthand for `self: &Self`. In this case,
+in the impl, `Self` refers to the value of type `String` that is the
+receiver for a call to the method `make_string`.
 
-## Type kinds
+## Subtyping
 
-Types in Rust are categorized into kinds, based on various properties of the
-components of the type. The kinds are:
+Subtyping is implicit and can occur at any stage in type checking or
+inference. Subtyping in Rust is very restricted and occurs only due to
+variance with respect to lifetimes and between types with higher ranked
+lifetimes. If we were to erase lifetimes from types, then the only subtyping
+would be due to type equality.
 
-* `Send`
-  : Types of this kind can be safely sent between tasks.
-    This kind includes scalars, boxes, procs, and
-    structural types containing only other owned types.
-    All `Send` types are `'static`.
-* `Copy`
-  : Types of this kind consist of "Plain Old Data"
-    which can be copied by simply moving bits.
-    All values of this kind can be implicitly copied.
-    This kind includes scalars and immutable references,
-    as well as structural types containing other `Copy` types.
-* `'static`
-  : Types of this kind do not contain any references (except for
-    references with the `static` lifetime, which are allowed).
-    This can be a useful guarantee for code
-    that breaks borrowing assumptions
-    using [`unsafe` operations](#unsafe-functions).
-* `Drop`
-  : This is not strictly a kind,
-    but its presence interacts with kinds:
-    the `Drop` trait provides a single method `drop`
-    that takes no parameters,
-    and is run when values of the type are dropped.
-    Such a method is called a "destructor",
-    and are always executed in "top-down" order:
-    a value is completely destroyed
-    before any of the values it owns run their destructors.
-    Only `Send` types can implement `Drop`.
+Consider the following example: string literals always have `'static`
+lifetime. Nevertheless, we can assign `s` to `t`:
 
-* _Default_
-  : Types with destructors, closure environments,
-    and various other _non-first-class_ types,
-    are not copyable at all.
-    Such types can usually only be accessed through pointers,
-    or in some cases, moved between mutable locations.
+```
+fn bar<'a>() {
+    let s: &'static str = "hi";
+    let t: &'a str = s;
+}
+```
+Since `'static` "lives longer" than `'a`, `&'static str` is a subtype of
+`&'a str`.
 
-Kinds can be supplied as _bounds_ on type parameters, like traits, in which
-case the parameter is constrained to types satisfying that kind.
+## Type coercions
 
-By default, type parameters do not carry any assumed kind-bounds at all. When
-instantiating a type parameter, the kind bounds on the parameter are checked to
-be the same or narrower than the kind of the type that it is instantiated with.
+Coercions are defined in [RFC 401]. A coercion is implicit and has no syntax.
 
-Sending operations are not part of the Rust language, but are implemented in
-the library. Generic functions that send values bound the kind of these values
-to sendable.
+[RFC 401]: https://github.com/rust-lang/rfcs/blob/master/text/0401-coercions.md
 
-# Memory and concurrency models
+### Coercion sites
 
-Rust has a memory model centered around concurrently-executing _tasks_. Thus
-its memory model and its concurrency model are best discussed simultaneously,
-as parts of each only make sense when considered from the perspective of the
-other.
+A coercion can only occur at certain coercion sites in a program; these are
+typically places where the desired type is explicit or can be derived by
+propagation from explicit types (without type inference). Possible coercion
+sites are:
 
-When reading about the memory model, keep in mind that it is partitioned in
-order to support tasks; and when reading about tasks, keep in mind that their
-isolation and communication mechanisms are only possible due to the ownership
-and lifetime semantics of the memory model.
+* `let` statements where an explicit type is given.
 
-## Memory model
+   For example, `42` is coerced to have type `i8` in the following:
 
-A Rust program's memory consists of a static set of *items*, a set of
-[tasks](#tasks) each with its own *stack*, and a *heap*. Immutable portions of
-the heap may be shared between tasks, mutable portions may not.
+   ```rust
+   let _: i8 = 42;
+   ```
 
-Allocations in the stack consist of *slots*, and allocations in the heap
+* `static` and `const` statements (similar to `let` statements).
+
+* Arguments for function calls
+
+  The value being coerced is the actual parameter, and it is coerced to
+  the type of the formal parameter.
+
+  For example, `42` is coerced to have type `i8` in the following:
+
+  ```rust
+  fn bar(_: i8) { }
+
+  fn main() {
+      bar(42);
+  }
+  ```
+
+* Instantiations of struct or variant fields
+
+  For example, `42` is coerced to have type `i8` in the following:
+
+  ```rust
+  struct Foo { x: i8 }
+
+  fn main() {
+      Foo { x: 42 };
+  }
+  ```
+
+* Function results, either the final line of a block if it is not
+  semicolon-terminated or any expression in a `return` statement
+
+  For example, `42` is coerced to have type `i8` in the following:
+
+  ```rust
+  fn foo() -> i8 {
+      42
+  }
+  ```
+
+If the expression in one of these coercion sites is a coercion-propagating
+expression, then the relevant sub-expressions in that expression are also
+coercion sites. Propagation recurses from these new coercion sites.
+Propagating expressions and their relevant sub-expressions are:
+
+* Array literals, where the array has type `[U; n]`. Each sub-expression in
+the array literal is a coercion site for coercion to type `U`.
+
+* Array literals with repeating syntax, where the array has type `[U; n]`. The
+repeated sub-expression is a coercion site for coercion to type `U`.
+
+* Tuples, where a tuple is a coercion site to type `(U_0, U_1, ..., U_n)`.
+Each sub-expression is a coercion site to the respective type, e.g. the
+zeroth sub-expression is a coercion site to type `U_0`.
+
+* Parenthesized sub-expressions (`(e)`): if the expression has type `U`, then
+the sub-expression is a coercion site to `U`.
+
+* Blocks: if a block has type `U`, then the last expression in the block (if
+it is not semicolon-terminated) is a coercion site to `U`. This includes
+blocks which are part of control flow statements, such as `if`/`else`, if
+the block has a known type.
+
+### Coercion types
+
+Coercion is allowed between the following types:
+
+* `T` to `U` if `T` is a subtype of `U` (*reflexive case*)
+
+* `T_1` to `T_3` where `T_1` coerces to `T_2` and `T_2` coerces to `T_3`
+(*transitive case*)
+
+    Note that this is not fully supported yet
+
+* `&mut T` to `&T`
+
+* `*mut T` to `*const T`
+
+* `&T` to `*const T`
+
+* `&mut T` to `*mut T`
+
+* `&T` to `&U` if `T` implements `Deref<Target = U>`. For example:
+
+  ```rust
+  use std::ops::Deref;
+
+  struct CharContainer {
+      value: char,
+  }
+
+  impl Deref for CharContainer {
+      type Target = char;
+
+      fn deref<'a>(&'a self) -> &'a char {
+          &self.value
+      }
+  }
+
+  fn foo(arg: &char) {}
+
+  fn main() {
+      let x = &mut CharContainer { value: 'y' };
+      foo(x); //&mut CharContainer is coerced to &char.
+  }
+  ```
+
+* `&mut T` to `&mut U` if `T` implements `DerefMut<Target = U>`.
+
+* TyCtor(`T`) to TyCtor(coerce_inner(`T`)), where TyCtor(`T`) is one of
+    - `&T`
+    - `&mut T`
+    - `*const T`
+    - `*mut T`
+    - `Box<T>`
+
+    and where
+    - coerce_inner(`[T, ..n]`) = `[T]`
+    - coerce_inner(`T`) = `U` where `T` is a concrete type which implements the
+    trait `U`.
+
+    In the future, coerce_inner will be recursively extended to tuples and
+    structs. In addition, coercions from sub-traits to super-traits will be
+    added. See [RFC 401] for more details.
+
+# Special traits
+
+Several traits define special evaluation behavior.
+
+## The `Copy` trait
+
+The `Copy` trait changes the semantics of a type implementing it. Values whose
+type implements `Copy` are copied rather than moved upon assignment.
+
+## The `Sized` trait
+
+The `Sized` trait indicates that the size of this type is known at compile-time.
+
+## The `Drop` trait
+
+The `Drop` trait provides a destructor, to be run whenever a value of this type
+is to be destroyed.
+
+## The `Deref` trait
+
+The `Deref<Target = U>` trait allows a type to implicitly implement all the methods
+of the type `U`. When attempting to resolve a method call, the compiler will search
+the top-level type for the implementation of the called method. If no such method is
+found, `.deref()` is called and the compiler continues to search for the method
+implementation in the returned type `U`.
+
+# Memory model
+
+A Rust program's memory consists of a static set of *items* and a *heap*.
+Immutable portions of the heap may be safely shared between threads, mutable
+portions may not be safely shared, but several mechanisms for effectively-safe
+sharing of mutable values, built on unsafe code but enforcing a safe locking
+discipline, exist in the standard library.
+
+Allocations in the stack consist of *variables*, and allocations in the heap
 consist of *boxes*.
 
 ### Memory allocation and lifetime
@@ -4023,38 +3973,24 @@ The _items_ of a program are those functions, modules and types that have their
 value calculated at compile-time and stored uniquely in the memory image of the
 rust process. Items are neither dynamically allocated nor freed.
 
-A task's _stack_ consists of activation frames automatically allocated on entry
-to each function as the task executes. A stack allocation is reclaimed when
-control leaves the frame containing it.
-
 The _heap_ is a general term that describes boxes.  The lifetime of an
 allocation in the heap depends on the lifetime of the box values pointing to
 it. Since box values may themselves be passed in and out of frames, or stored
 in the heap, heap allocations may outlive the frame they are allocated within.
+An allocation in the heap is guaranteed to reside at a single location in the
+heap for the whole lifetime of the allocation - it will never be relocated as
+a result of moving a box value.
 
 ### Memory ownership
-
-A task owns all memory it can *safely* reach through local variables, as well
-as boxes and references.
-
-When a task sends a value that has the `Send` trait to another task, it loses
-ownership of the value sent and can no longer refer to it. This is statically
-guaranteed by the combined use of "move semantics", and the compiler-checked
-_meaning_ of the `Send` trait: it is only instantiated for (transitively)
-sendable kinds of data constructor and pointers, never including references.
 
 When a stack frame is exited, its local allocations are all released, and its
 references to boxes are dropped.
 
-When a task finishes, its stack is necessarily empty and it therefore has no
-references to any boxes; the remainder of its heap is immediately freed.
+### Variables
 
-### Memory slots
-
-A task's stack contains slots.
-
-A _slot_ is a component of a stack frame, either a function parameter, a
-[temporary](#lvalues,-rvalues-and-temporaries), or a local variable.
+A _variable_ is a component of a stack frame, either a named function parameter,
+an anonymous [temporary](#lvalues-rvalues-and-temporaries), or a named local
+variable.
 
 A _local variable_ (or *stack-local* allocation) holds a value directly,
 allocated within the stack's memory. The value is a part of the stack frame.
@@ -4063,11 +3999,11 @@ Local variables are immutable unless declared otherwise like: `let mut x = ...`.
 
 Function parameters are immutable unless declared with `mut`. The `mut` keyword
 applies only to the following parameter (so `|mut x, y|` and `fn f(mut x:
-Box<int>, y: Box<int>)` declare one mutable variable `x` and one immutable
+Box<i32>, y: Box<i32>)` declare one mutable variable `x` and one immutable
 variable `y`).
 
 Methods that take either `self` or `Box<Self>` can optionally place them in a
-mutable slot by prefixing them with `mut` (similar to regular arguments):
+mutable variable by prefixing them with `mut` (similar to regular arguments):
 
 ```
 trait Changer {
@@ -4082,136 +4018,16 @@ state. Subsequent statements within a function may or may not initialize the
 local variables. Local variables can be used only after they have been
 initialized; this is enforced by the compiler.
 
-### Boxes
-
-A _box_ is a reference to a heap allocation holding another value, which is
-constructed by the prefix operator `box`. When the standard library is in use,
-the type of a box is `std::owned::Box<T>`.
-
-An example of a box type and value:
-
-```
-let x: Box<int> = box 10;
-```
-
-Box values exist in 1:1 correspondence with their heap allocation, copying a
-box value makes a shallow copy of the pointer. Rust will consider a shallow
-copy of a box to move ownership of the value. After a value has been moved,
-the source location cannot be used unless it is reinitialized.
-
-```
-let x: Box<int> = box 10;
-let y = x;
-// attempting to use `x` will result in an error here
-```
-
-## Tasks
-
-An executing Rust program consists of a tree of tasks. A Rust _task_ consists
-of an entry function, a stack, a set of outgoing communication channels and
-incoming communication ports, and ownership of some portion of the heap of a
-single operating-system process.
-
-### Communication between tasks
-
-Rust tasks are isolated and generally unable to interfere with one another's
-memory directly, except through [`unsafe` code](#unsafe-functions).  All
-contact between tasks is mediated by safe forms of ownership transfer, and data
-races on memory are prohibited by the type system.
-
-When you wish to send data between tasks, the values are restricted to the
-[`Send` type-kind](#type-kinds). Restricting communication interfaces to this
-kind ensures that no references move between tasks. Thus access to an entire
-data structure can be mediated through its owning "root" value; no further
-locking or copying is required to avoid data races within the substructure of
-such a value.
-
-### Task lifecycle
-
-The _lifecycle_ of a task consists of a finite set of states and events that
-cause transitions between the states. The lifecycle states of a task are:
-
-* running
-* blocked
-* panicked
-* dead
-
-A task begins its lifecycle &mdash; once it has been spawned &mdash; in the
-*running* state. In this state it executes the statements of its entry
-function, and any functions called by the entry function.
-
-A task may transition from the *running* state to the *blocked* state any time
-it makes a blocking communication call. When the call can be completed &mdash;
-when a message arrives at a sender, or a buffer opens to receive a message
-&mdash; then the blocked task will unblock and transition back to *running*.
-
-A task may transition to the *panicked* state at any time, due being killed by
-some external event or internally, from the evaluation of a `panic!()` macro.
-Once *panicking*, a task unwinds its stack and transitions to the *dead* state.
-Unwinding the stack of a task is done by the task itself, on its own control
-stack. If a value with a destructor is freed during unwinding, the code for the
-destructor is run, also on the task's control stack. Running the destructor
-code causes a temporary transition to a *running* state, and allows the
-destructor code to cause any subsequent state transitions. The original task
-of unwinding and panicking thereby may suspend temporarily, and may involve
-(recursive) unwinding of the stack of a failed destructor. Nonetheless, the
-outermost unwinding activity will continue until the stack is unwound and the
-task transitions to the *dead* state. There is no way to "recover" from task
-panics. Once a task has temporarily suspended its unwinding in the *panicking*
-state, a panic occurring from within this destructor results in *hard* panic.
-A hard panic currently results in the process aborting.
-
-A task in the *dead* state cannot transition to other states; it exists only to
-have its termination status inspected by other tasks, and/or to await
-reclamation when the last reference to it drops.
-
-# Runtime services, linkage and debugging
-
-The Rust _runtime_ is a relatively compact collection of Rust code that
-provides fundamental services and datatypes to all Rust tasks at run-time. It
-is smaller and simpler than many modern language runtimes. It is tightly
-integrated into the language's execution model of memory, tasks, communication
-and logging.
-
-### Memory allocation
-
-The runtime memory-management system is based on a _service-provider
-interface_, through which the runtime requests blocks of memory from its
-environment and releases them back to its environment when they are no longer
-needed. The default implementation of the service-provider interface consists
-of the C runtime functions `malloc` and `free`.
-
-The runtime memory-management system, in turn, supplies Rust tasks with
-facilities for allocating releasing stacks, as well as allocating and freeing
-heap data.
-
-### Built in types
-
-The runtime provides C and Rust code to assist with various built-in types,
-such as arrays, strings, and the low level communication system (ports,
-channels, tasks).
-
-Support for other built-in types such as simple types, tuples and enums is
-open-coded by the Rust compiler.
-
-### Task scheduling and communication
-
-The runtime provides code to manage inter-task communication. This includes
-the system of task-lifecycle state transitions depending on the contents of
-queues, as well as code to copy values between queues and their recipients and
-to serialize values for transmission over operating-system inter-process
-communication facilities.
-
-### Linkage
+# Linkage
 
 The Rust compiler supports various methods to link crates together both
 statically and dynamically. This section will explore the various methods to
 link Rust crates together, and more information about native libraries can be
-found in the [ffi guide][ffi].
+found in the [FFI section of the book][ffi].
 
 In one session of compilation, the compiler can generate multiple artifacts
 through the usage of either command line flags or the `crate_type` attribute.
-If one or more command line flag is specified, all `crate_type` attributes will
+If one or more command line flags are specified, all `crate_type` attributes will
 be ignored in favor of only building the artifacts specified by command line.
 
 * `--crate-type=bin`, `#[crate_type = "bin"]` - A runnable executable will be
@@ -4257,7 +4073,7 @@ Note that these outputs are stackable in the sense that if multiple are
 specified, then the compiler will produce each form of output at once without
 having to recompile. However, this only applies for outputs specified by the
 same method. If only `crate_type` attributes are specified, then they will all
-be built, but if one or more `--crate-type` command line flag is specified,
+be built, but if one or more `--crate-type` command line flags are specified,
 then only those outputs will be built.
 
 With all these different kinds of outputs, if crate A depends on crate B, then
@@ -4312,77 +4128,121 @@ In general, `--crate-type=bin` or `--crate-type=lib` should be sufficient for
 all compilation needs, and the other options are just available if more
 fine-grained control is desired over the output format of a Rust crate.
 
-# Appendix: Rationales and design tradeoffs
+# Unsafety
 
-*TODO*.
+Unsafe operations are those that potentially violate the memory-safety
+guarantees of Rust's static semantics.
 
-# Appendix: Influences and further references
+The following language level features cannot be used in the safe subset of
+Rust:
 
-## Influences
+- Dereferencing a [raw pointer](#pointer-types).
+- Reading or writing a [mutable static variable](#mutable-statics).
+- Calling an unsafe function (including an intrinsic or foreign function).
 
->  The essential problem that must be solved in making a fault-tolerant
->  software system is therefore that of fault-isolation. Different programmers
->  will write different modules, some modules will be correct, others will have
->  errors. We do not want the errors in one module to adversely affect the
->  behaviour of a module which does not have any errors.
->
->  &mdash; Joe Armstrong
+## Unsafe functions
 
->  In our approach, all data is private to some process, and processes can
->  only communicate through communications channels. *Security*, as used
->  in this paper, is the property which guarantees that processes in a system
->  cannot affect each other except by explicit communication.
->
->  When security is absent, nothing which can be proven about a single module
->  in isolation can be guaranteed to hold when that module is embedded in a
->  system [...]
->
->  &mdash; Robert Strom and Shaula Yemini
+Unsafe functions are functions that are not safe in all contexts and/or for all
+possible inputs. Such a function must be prefixed with the keyword `unsafe` and
+can only be called from an `unsafe` block or another `unsafe` function.
 
->  Concurrent and applicative programming complement each other. The
->  ability to send messages on channels provides I/O without side effects,
->  while the avoidance of shared data helps keep concurrent processes from
->  colliding.
->
->  &mdash; Rob Pike
+## Unsafe blocks
 
-Rust is not a particularly original language. It may however appear unusual by
-contemporary standards, as its design elements are drawn from a number of
-"historical" languages that have, with a few exceptions, fallen out of favour.
-Five prominent lineages contribute the most, though their influences have come
-and gone during the course of Rust's development:
+A block of code can be prefixed with the `unsafe` keyword, to permit calling
+`unsafe` functions or dereferencing raw pointers within a safe function.
 
-* The NIL (1981) and Hermes (1990) family. These languages were developed by
-  Robert Strom, Shaula Yemini, David Bacon and others in their group at IBM
-  Watson Research Center (Yorktown Heights, NY, USA).
+When a programmer has sufficient conviction that a sequence of potentially
+unsafe operations is actually safe, they can encapsulate that sequence (taken
+as a whole) within an `unsafe` block. The compiler will consider uses of such
+code safe, in the surrounding context.
 
-* The Erlang (1987) language, developed by Joe Armstrong, Robert Virding, Claes
-  Wikstr&ouml;m, Mike Williams and others in their group at the Ericsson Computer
-  Science Laboratory (&Auml;lvsj&ouml;, Stockholm, Sweden) .
+Unsafe blocks are used to wrap foreign libraries, make direct use of hardware
+or implement features not directly present in the language. For example, Rust
+provides the language features necessary to implement memory-safe concurrency
+in the language but the implementation of threads and message passing is in the
+standard library.
 
-* The Sather (1990) language, developed by Stephen Omohundro, Chu-Cheow Lim,
-  Heinz Schmidt and others in their group at The International Computer
-  Science Institute of the University of California, Berkeley (Berkeley, CA,
-  USA).
+Rust's type system is a conservative approximation of the dynamic safety
+requirements, so in some cases there is a performance cost to using safe code.
+For example, a doubly-linked list is not a tree structure and can only be
+represented with reference-counted pointers in safe code. By using `unsafe`
+blocks to represent the reverse links as raw pointers, it can be implemented
+with only boxes.
 
-* The Newsqueak (1988), Alef (1995), and Limbo (1996) family. These
-  languages were developed by Rob Pike, Phil Winterbottom, Sean Dorward and
-  others in their group at Bell Labs Computing Sciences Research Center
-  (Murray Hill, NJ, USA).
+## Behavior considered undefined
 
-* The Napier (1985) and Napier88 (1988) family. These languages were
-  developed by Malcolm Atkinson, Ron Morrison and others in their group at
-  the University of St. Andrews (St. Andrews, Fife, UK).
+The following is a list of behavior which is forbidden in all Rust code,
+including within `unsafe` blocks and `unsafe` functions. Type checking provides
+the guarantee that these issues are never caused by safe code.
 
-Additional specific influences can be seen from the following languages:
+* Data races
+* Dereferencing a null/dangling raw pointer
+* Reads of [undef](http://llvm.org/docs/LangRef.html#undefined-values)
+  (uninitialized) memory
+* Breaking the [pointer aliasing
+  rules](http://llvm.org/docs/LangRef.html#pointer-aliasing-rules)
+  with raw pointers (a subset of the rules used by C)
+* `&mut T` and `&T` follow LLVM’s scoped [noalias] model, except if the `&T`
+  contains an `UnsafeCell<U>`. Unsafe code must not violate these aliasing
+  guarantees.
+* Mutating non-mutable data (that is, data reached through a shared reference or
+  data owned by a `let` binding), unless that data is contained within an `UnsafeCell<U>`.
+* Invoking undefined behavior via compiler intrinsics:
+  * Indexing outside of the bounds of an object with `std::ptr::offset`
+    (`offset` intrinsic), with
+    the exception of one byte past the end which is permitted.
+  * Using `std::ptr::copy_nonoverlapping_memory` (`memcpy32`/`memcpy64`
+    intrinsics) on overlapping buffers
+* Invalid values in primitive types, even in private fields/locals:
+  * Dangling/null references or boxes
+  * A value other than `false` (0) or `true` (1) in a `bool`
+  * A discriminant in an `enum` not included in the type definition
+  * A value in a `char` which is a surrogate or above `char::MAX`
+  * Non-UTF-8 byte sequences in a `str`
+* Unwinding into Rust from foreign code or unwinding from Rust into foreign
+  code. Rust's failure system is not compatible with exception handling in
+  other languages. Unwinding must be caught and handled at FFI boundaries.
 
-* The structural algebraic types and compilation manager of SML.
-* The attribute and assembly systems of C#.
-* The references and deterministic destructor system of C++.
-* The memory region systems of the ML Kit and Cyclone.
-* The typeclass system of Haskell.
-* The lexical identifier rule of Python.
-* The block syntax of Ruby.
+[noalias]: http://llvm.org/docs/LangRef.html#noalias
 
-[ffi]: guide-ffi.html
-[plugin]: guide-plugin.html
+## Behavior not considered unsafe
+
+This is a list of behavior not considered *unsafe* in Rust terms, but that may
+be undesired.
+
+* Deadlocks
+* Leaks of memory and other resources
+* Exiting without calling destructors
+* Integer overflow
+  - Overflow is considered "unexpected" behavior and is always user-error,
+    unless the `wrapping` primitives are used. In non-optimized builds, the compiler
+    will insert debug checks that panic on overflow, but in optimized builds overflow
+    instead results in wrapped values. See [RFC 560] for the rationale and more details.
+
+[RFC 560]: https://github.com/rust-lang/rfcs/blob/master/text/0560-integer-overflow.md
+
+# Appendix: Influences
+
+Rust is not a particularly original language, with design elements coming from
+a wide range of sources. Some of these are listed below (including elements
+that have since been removed):
+
+* SML, OCaml: algebraic data types, pattern matching, type inference,
+  semicolon statement separation
+* C++: references, RAII, smart pointers, move semantics, monomorphization,
+  memory model
+* ML Kit, Cyclone: region based memory management
+* Haskell (GHC): typeclasses, type families
+* Newsqueak, Alef, Limbo: channels, concurrency
+* Erlang: message passing, thread failure, ~~linked thread failure~~,
+  ~~lightweight concurrency~~
+* Swift: optional bindings
+* Scheme: hygienic macros
+* C#: attributes
+* Ruby: ~~block syntax~~
+* NIL, Hermes: ~~typestate~~
+* [Unicode Annex #31](http://www.unicode.org/reports/tr31/): identifier and
+  pattern syntax
+
+[ffi]: book/ffi.html
+[plugin]: book/compiler-plugins.html

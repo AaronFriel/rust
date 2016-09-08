@@ -8,29 +8,33 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// aux-build:issue-17718.rs
+// aux-build:issue-17718-aux.rs
 
-extern crate "issue-17718" as other;
 
-use std::sync::atomic;
+#![feature(core)]
+#![feature(const_fn)]
 
-const C1: uint = 1;
-const C2: atomic::AtomicUint = atomic::INIT_ATOMIC_UINT;
+extern crate issue_17718_aux as other;
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+const C1: usize = 1;
+const C2: AtomicUsize = AtomicUsize::new(0);
 const C3: fn() = foo;
-const C4: uint = C1 * C1 + C1 / C1;
-const C5: &'static uint = &C4;
-const C6: uint = {
-    const C: uint = 3;
+const C4: usize = C1 * C1 + C1 / C1;
+const C5: &'static usize = &C4;
+const C6: usize = {
+    const C: usize = 3;
     C
 };
 
-static S1: uint = 3;
-static S2: atomic::AtomicUint = atomic::INIT_ATOMIC_UINT;
+static S1: usize = 3;
+static S2: AtomicUsize = AtomicUsize::new(0);
 
 mod test {
-    static A: uint = 4;
-    static B: &'static uint = &A;
-    static C: &'static uint = &(A);
+    static A: usize = 4;
+    static B: &'static usize = &A;
+    static C: &'static usize = &(A);
 }
 
 fn foo() {}
@@ -38,14 +42,14 @@ fn foo() {}
 fn main() {
     assert_eq!(C1, 1);
     assert_eq!(C3(), ());
-    assert_eq!(C2.fetch_add(1, atomic::SeqCst), 0);
-    assert_eq!(C2.fetch_add(1, atomic::SeqCst), 0);
+    assert_eq!(C2.fetch_add(1, Ordering::SeqCst), 0);
+    assert_eq!(C2.fetch_add(1, Ordering::SeqCst), 0);
     assert_eq!(C4, 2);
     assert_eq!(*C5, 2);
     assert_eq!(C6, 3);
     assert_eq!(S1, 3);
-    assert_eq!(S2.fetch_add(1, atomic::SeqCst), 0);
-    assert_eq!(S2.fetch_add(1, atomic::SeqCst), 1);
+    assert_eq!(S2.fetch_add(1, Ordering::SeqCst), 0);
+    assert_eq!(S2.fetch_add(1, Ordering::SeqCst), 1);
 
     match 1 {
         C1 => {}
@@ -62,13 +66,13 @@ fn main() {
 
     assert_eq!(other::C1, 1);
     assert_eq!(other::C3(), ());
-    assert_eq!(other::C2.fetch_add(1, atomic::SeqCst), 0);
-    assert_eq!(other::C2.fetch_add(1, atomic::SeqCst), 0);
+    assert_eq!(other::C2.fetch_add(1, Ordering::SeqCst), 0);
+    assert_eq!(other::C2.fetch_add(1, Ordering::SeqCst), 0);
     assert_eq!(other::C4, 2);
     assert_eq!(*other::C5, 2);
     assert_eq!(other::S1, 3);
-    assert_eq!(other::S2.fetch_add(1, atomic::SeqCst), 0);
-    assert_eq!(other::S2.fetch_add(1, atomic::SeqCst), 1);
+    assert_eq!(other::S2.fetch_add(1, Ordering::SeqCst), 0);
+    assert_eq!(other::S2.fetch_add(1, Ordering::SeqCst), 1);
 
     let _a = other::C1;
     let _a = other::C2;

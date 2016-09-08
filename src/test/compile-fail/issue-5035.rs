@@ -10,6 +10,12 @@
 
 trait I {}
 type K = I;
-impl K for int {} //~ ERROR: `K` is not a trait
-//~^ NOTE: `type` aliases cannot be used for traits
+impl K for isize {} //~ ERROR: `K` is not a trait
+                    //~| NOTE: not a trait
+                    //~| NOTE: aliases cannot be used for traits
+
+use ImportError; //~ ERROR unresolved import `ImportError` [E0432]
+                 //~^ no `ImportError` in the root
+impl ImportError for () {} // check that this is not an additional error (c.f. #35142)
+
 fn main() {}

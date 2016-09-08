@@ -9,9 +9,10 @@
 // except according to those terms.
 
 pub fn main() {
-    static z: &'static int = {
+    const z: &'static isize = {
+        //~^ ERROR blocks in constants are limited to items and tail expressions
         let p = 3;
+        //~^ ERROR blocks in constants are limited to items and tail expressions
         &p
-//~^ ERROR cannot borrow a local variable inside a static block, define a separate static instead
     };
 }

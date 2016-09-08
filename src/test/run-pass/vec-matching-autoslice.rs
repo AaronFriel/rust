@@ -8,17 +8,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
+#![feature(slice_patterns)]
+
 pub fn main() {
-    let x = [1i, 2, 3];
+    let x = [1, 2, 3];
     match x {
         [2, _, _] => panic!(),
         [1, a, b] => {
-            assert!([a, b] == [2, 3]);
+            assert_eq!([a, b], [2, 3]);
         }
         [_, _, _] => panic!(),
     }
 
-    let y = ([(1i, true), (2i, false)], 0.5f64);
+    let y = ([(1, true), (2, false)], 0.5f64);
     match y {
         ([(1, a), (b, false)], _) => {
             assert_eq!(a, true);

@@ -8,36 +8,35 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Verify that UnsafeCell is *always* sync regardless if `T` is sync.
+// Verify that UnsafeCell is *always* !Sync regardless if `T` is sync.
 
-// ignore-tidy-linelength
+#![feature(optin_builtin_traits)]
 
 use std::cell::UnsafeCell;
-use std::kinds::marker;
+use std::marker::Sync;
 
 struct MySync<T> {
     u: UnsafeCell<T>
 }
 
-struct NoSync {
-    m: marker::NoSync
-}
+struct NoSync;
+impl !Sync for NoSync {}
 
-fn test<T: Sync>(s: T){
-
-}
+fn test<T: Sync>(s: T) {}
 
 fn main() {
-    let us = UnsafeCell::new(MySync{u: UnsafeCell::new(0i)});
+    let us = UnsafeCell::new(MySync{u: UnsafeCell::new(0)});
     test(us);
+    //~^ ERROR `std::cell::UnsafeCell<MySync<{integer}>>: std::marker::Sync` is not satisfied
 
-    let uns = UnsafeCell::new(NoSync{m: marker::NoSync});
+    let uns = UnsafeCell::new(NoSync);
     test(uns);
+    //~^ ERROR `std::cell::UnsafeCell<NoSync>: std::marker::Sync` is not satisfied
 
     let ms = MySync{u: uns};
     test(ms);
+    //~^ ERROR `std::cell::UnsafeCell<NoSync>: std::marker::Sync` is not satisfied
 
-    let ns = NoSync{m: marker::NoSync};
-    test(ns);
-    //~^ ERROR `core::kinds::Sync` is not implemented
+    test(NoSync);
+    //~^ ERROR `NoSync: std::marker::Sync` is not satisfied
 }

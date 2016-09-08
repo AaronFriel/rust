@@ -12,8 +12,11 @@
 
 # This script uses the following Unicode tables:
 # - DerivedCoreProperties.txt
+# - DerivedNormalizationProps.txt
 # - EastAsianWidth.txt
+# - auxiliary/GraphemeBreakProperty.txt
 # - PropList.txt
+# - ReadMe.txt
 # - Scripts.txt
 # - UnicodeData.txt
 #
@@ -22,7 +25,10 @@
 
 import fileinput, re, os, sys, operator
 
-preamble = '''// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+bytes_old = 0
+bytes_new = 0
+
+preamble = '''// Copyright 2012-2016 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -51,73 +57,66 @@ expanded_categories = {
     'Cc': ['C'], 'Cf': ['C'], 'Cs': ['C'], 'Co': ['C'], 'Cn': ['C'],
 }
 
-
-# Grapheme cluster data
-# taken from UAX29, http://www.unicode.org/reports/tr29/
-# these code points are excluded from the Control category
-# NOTE: CR and LF are also technically excluded, but for
-# the sake of convenience we leave them in the Control group
-# and manually check them in the appropriate place. This is
-# still compliant with the implementation requirements.
-grapheme_control_exceptions = set([0x200c, 0x200d])
-
-# the Regional_Indicator category
-grapheme_regional_indicator = [(0x1f1e6, 0x1f1ff)]
-
-# "The following ... are specifically excluded" from the SpacingMark category
-# http://www.unicode.org/reports/tr29/#SpacingMark
-grapheme_spacingmark_exceptions = [(0x102b, 0x102c), (0x1038, 0x1038),
-    (0x1062, 0x1064), (0x1067, 0x106d), (0x1083, 0x1083), (0x1087, 0x108c),
-    (0x108f, 0x108f), (0x109a, 0x109c), (0x19b0, 0x19b4), (0x19b8, 0x19b9),
-    (0x19bb, 0x19c0), (0x19c8, 0x19c9), (0x1a61, 0x1a61), (0x1a63, 0x1a64),
-    (0xaa7b, 0xaa7b), (0xaa7d, 0xaa7d)]
-
-# these are included in the SpacingMark category
-grapheme_spacingmark_extra = set([0xe33, 0xeb3])
+# these are the surrogate codepoints, which are not valid rust characters
+surrogate_codepoints = (0xd800, 0xdfff)
 
 def fetch(f):
-    if not os.path.exists(f):
+    if not os.path.exists(os.path.basename(f)):
         os.system("curl -O http://www.unicode.org/Public/UNIDATA/%s"
                   % f)
 
-    if not os.path.exists(f):
+    if not os.path.exists(os.path.basename(f)):
         sys.stderr.write("cannot load %s" % f)
         exit(1)
 
-def is_valid_unicode(n):
-    return 0 <= n <= 0xD7FF or 0xE000 <= n <= 0x10FFFF
+def is_surrogate(n):
+    return surrogate_codepoints[0] <= n <= surrogate_codepoints[1]
 
 def load_unicode_data(f):
     fetch(f)
     gencats = {}
-    upperlower = {}
-    lowerupper = {}
+    to_lower = {}
+    to_upper = {}
+    to_title = {}
     combines = {}
     canon_decomp = {}
     compat_decomp = {}
 
+    udict = {};
+    range_start = -1;
     for line in fileinput.input(f):
-        fields = line.split(";")
-        if len(fields) != 15:
+        data = line.split(';');
+        if len(data) != 15:
             continue
-        [code, name, gencat, combine, bidi,
+        cp = int(data[0], 16);
+        if is_surrogate(cp):
+            continue
+        if range_start >= 0:
+            for i in xrange(range_start, cp):
+                udict[i] = data;
+            range_start = -1;
+        if data[1].endswith(", First>"):
+            range_start = cp;
+            continue;
+        udict[cp] = data;
+
+    for code in udict:
+        [code_org, name, gencat, combine, bidi,
          decomp, deci, digit, num, mirror,
-         old, iso, upcase, lowcase, titlecase ] = fields
-
-        code_org = code
-        code     = int(code, 16)
-
-        if not is_valid_unicode(code):
-            continue
+         old, iso, upcase, lowcase, titlecase ] = udict[code];
 
         # generate char to char direct common and simple conversions
         # uppercase to lowercase
-        if gencat == "Lu" and lowcase != "" and code_org != lowcase:
-            upperlower[code] = int(lowcase, 16)
+        if lowcase != "" and code_org != lowcase:
+            to_lower[code] = (int(lowcase, 16), 0, 0)
 
         # lowercase to uppercase
-        if gencat == "Ll" and upcase != "" and code_org != upcase:
-            lowerupper[code] = int(upcase, 16)
+        if upcase != "" and code_org != upcase:
+            to_upper[code] = (int(upcase, 16), 0, 0)
+
+        # title case
+        if titlecase.strip() != "" and code_org != titlecase:
+            to_title[code] = (int(titlecase, 16), 0, 0)
 
         # store decomposition, if given
         if decomp != "":
@@ -153,7 +152,32 @@ def load_unicode_data(f):
     gencats = group_cats(gencats)
     combines = to_combines(group_cats(combines))
 
-    return (canon_decomp, compat_decomp, gencats, combines, lowerupper, upperlower)
+    return (canon_decomp, compat_decomp, gencats, combines, to_upper, to_lower, to_title)
+
+def load_special_casing(f, to_upper, to_lower, to_title):
+    fetch(f)
+    for line in fileinput.input(f):
+        data = line.split('#')[0].split(';')
+        if len(data) == 5:
+            code, lower, title, upper, _comment = data
+        elif len(data) == 6:
+            code, lower, title, upper, condition, _comment = data
+            if condition.strip():  # Only keep unconditional mappins
+                continue
+        else:
+            continue
+        code = code.strip()
+        lower = lower.strip()
+        title = title.strip()
+        upper = upper.strip()
+        key = int(code, 16)
+        for (map_, values) in [(to_lower, lower), (to_upper, upper), (to_title, title)]:
+            if values != code:
+                values = [int(i, 16) for i in values.split()]
+                for _ in range(len(values), 3):
+                    values.append(0)
+                assert len(values) == 3
+                map_[key] = values
 
 def group_cats(cats):
     cats_out = {}
@@ -216,10 +240,10 @@ def format_table_content(f, content, indent):
 def load_properties(f, interestingprops):
     fetch(f)
     props = {}
-    re1 = re.compile("^([0-9A-F]+) +; (\w+)")
-    re2 = re.compile("^([0-9A-F]+)\.\.([0-9A-F]+) +; (\w+)")
+    re1 = re.compile("^ *([0-9A-F]+) *; *(\w+)")
+    re2 = re.compile("^ *([0-9A-F]+)\.\.([0-9A-F]+) *; *(\w+)")
 
-    for line in fileinput.input(f):
+    for line in fileinput.input(os.path.basename(f)):
         prop = None
         d_lo = 0
         d_hi = 0
@@ -243,58 +267,30 @@ def load_properties(f, interestingprops):
         if prop not in props:
             props[prop] = []
         props[prop].append((d_lo, d_hi))
+
+    # optimize if possible
+    for prop in props:
+        props[prop] = group_cat(ungroup_cat(props[prop]))
+
     return props
 
-# load all widths of want_widths, except those in except_cats
-def load_east_asian_width(want_widths, except_cats):
-    f = "EastAsianWidth.txt"
-    fetch(f)
-    widths = {}
-    re1 = re.compile("^([0-9A-F]+);(\w+) +# (\w+)")
-    re2 = re.compile("^([0-9A-F]+)\.\.([0-9A-F]+);(\w+) +# (\w+)")
-
-    for line in fileinput.input(f):
-        width = None
-        d_lo = 0
-        d_hi = 0
-        cat = None
-        m = re1.match(line)
-        if m:
-            d_lo = m.group(1)
-            d_hi = m.group(1)
-            width = m.group(2)
-            cat = m.group(3)
-        else:
-            m = re2.match(line)
-            if m:
-                d_lo = m.group(1)
-                d_hi = m.group(2)
-                width = m.group(3)
-                cat = m.group(4)
-            else:
-                continue
-        if cat in except_cats or width not in want_widths:
-            continue
-        d_lo = int(d_lo, 16)
-        d_hi = int(d_hi, 16)
-        if width not in widths:
-            widths[width] = []
-        widths[width].append((d_lo, d_hi))
-    return widths
-
 def escape_char(c):
-    return "'\\u{%x}'" % c
+    return "'\\u{%x}'" % c if c != 0 else "'\\0'"
 
 def emit_bsearch_range_table(f):
     f.write("""
-fn bsearch_range_table(c: char, r: &'static [(char,char)]) -> bool {
+fn bsearch_range_table(c: char, r: &'static [(char, char)]) -> bool {
     use core::cmp::Ordering::{Equal, Less, Greater};
-    use core::slice::SliceExt;
-    r.binary_search(|&(lo,hi)| {
-        if lo <= c && c <= hi { Equal }
-        else if hi < c { Less }
-        else { Greater }
-    }).found().is_some()
+    r.binary_search_by(|&(lo, hi)| {
+         if c < lo {
+             Greater
+         } else if hi < c {
+             Less
+         } else {
+             Equal
+         }
+     })
+     .is_ok()
 }\n
 """)
 
@@ -303,7 +299,7 @@ def emit_table(f, name, t_data, t_type = "&'static [(char, char)]", is_pub=True,
     pub_string = ""
     if is_pub:
         pub_string = "pub "
-    f.write("    %sstatic %s: %s = &[\n" % (pub_string, name, t_type))
+    f.write("    %sconst %s: %s = &[\n" % (pub_string, name, t_type))
     data = ""
     first = True
     for dat in t_data:
@@ -314,159 +310,174 @@ def emit_table(f, name, t_data, t_type = "&'static [(char, char)]", is_pub=True,
     format_table_content(f, data, 8)
     f.write("\n    ];\n\n")
 
-def emit_property_module(f, mod, tbl, emit_fn):
+def emit_trie_lookup_range_table(f):
+    f.write("""
+
+// BoolTrie is a trie for representing a set of Unicode codepoints. It is
+// implemented with postfix compression (sharing of identical child nodes),
+// which gives both compact size and fast lookup.
+//
+// The space of Unicode codepoints is divided into 3 subareas, each
+// represented by a trie with different depth. In the first (0..0x800), there
+// is no trie structure at all; each u64 entry corresponds to a bitvector
+// effectively holding 64 bool values.
+//
+// In the second (0x800..0x10000), each child of the root node represents a
+// 64-wide subrange, but instead of storing the full 64-bit value of the leaf,
+// the trie stores an 8-bit index into a shared table of leaf values. This
+// exploits the fact that in reasonable sets, many such leaves can be shared.
+//
+// In the third (0x10000..0x110000), each child of the root node represents a
+// 4096-wide subrange, and the trie stores an 8-bit index into a 64-byte slice
+// of a child tree. Each of these 64 bytes represents an index into the table
+// of shared 64-bit leaf values. This exploits the sparse structure in the
+// non-BMP range of most Unicode sets.
+pub struct BoolTrie {
+    // 0..0x800 (corresponding to 1 and 2 byte utf-8 sequences)
+    r1: [u64; 32],   // leaves
+
+    // 0x800..0x10000 (corresponding to 3 byte utf-8 sequences)
+    r2: [u8; 992],      // first level
+    r3: &'static [u64],  // leaves
+
+    // 0x10000..0x110000 (corresponding to 4 byte utf-8 sequences)
+    r4: [u8; 256],       // first level
+    r5: &'static [u8],   // second level
+    r6: &'static [u64],  // leaves
+}
+
+fn trie_range_leaf(c: usize, bitmap_chunk: u64) -> bool {
+    ((bitmap_chunk >> (c & 63)) & 1) != 0
+}
+
+fn trie_lookup_range_table(c: char, r: &'static BoolTrie) -> bool {
+    let c = c as usize;
+    if c < 0x800 {
+        trie_range_leaf(c, r.r1[c >> 6])
+    } else if c < 0x10000 {
+        let child = r.r2[(c >> 6) - 0x20];
+        trie_range_leaf(c, r.r3[child as usize])
+    } else {
+        let child = r.r4[(c >> 12) - 0x10];
+        let leaf = r.r5[((child as usize) << 6) + ((c >> 6) & 0x3f)];
+        trie_range_leaf(c, r.r6[leaf as usize])
+    }
+}\n
+""")
+
+def compute_trie(rawdata, chunksize):
+    root = []
+    childmap = {}
+    child_data = []
+    for i in range(len(rawdata) / chunksize):
+        data = rawdata[i * chunksize: (i + 1) * chunksize]
+        child = '|'.join(map(str, data))
+        if child not in childmap:
+            childmap[child] = len(childmap)
+            child_data.extend(data)
+        root.append(childmap[child])
+    return (root, child_data)
+
+def emit_bool_trie(f, name, t_data, is_pub=True):
+    global bytes_old, bytes_new
+    bytes_old += 8 * len(t_data)
+    CHUNK = 64
+    rawdata = [False] * 0x110000;
+    for (lo, hi) in t_data:
+        for cp in range(lo, hi + 1):
+            rawdata[cp] = True
+
+    # convert to bitmap chunks of 64 bits each
+    chunks = []
+    for i in range(0x110000 / CHUNK):
+        chunk = 0
+        for j in range(64):
+            if rawdata[i * 64 + j]:
+                chunk |= 1 << j
+        chunks.append(chunk)
+
+    pub_string = ""
+    if is_pub:
+        pub_string = "pub "
+    f.write("    %sconst %s: &'static super::BoolTrie = &super::BoolTrie {\n" % (pub_string, name))
+    f.write("        r1: [\n")
+    data = ','.join('0x%016x' % chunk for chunk in chunks[0:0x800 / CHUNK])
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+
+    # 0x800..0x10000 trie
+    (r2, r3) = compute_trie(chunks[0x800 / CHUNK : 0x10000 / CHUNK], 64 / CHUNK)
+    f.write("        r2: [\n")
+    data = ','.join(str(node) for node in r2)
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+    f.write("        r3: &[\n")
+    data = ','.join('0x%016x' % chunk for chunk in r3)
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+
+    # 0x10000..0x110000 trie
+    (mid, r6) = compute_trie(chunks[0x10000 / CHUNK : 0x110000 / CHUNK], 64 / CHUNK)
+    (r4, r5) = compute_trie(mid, 64)
+    f.write("        r4: [\n")
+    data = ','.join(str(node) for node in r4)
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+    f.write("        r5: &[\n")
+    data = ','.join(str(node) for node in r5)
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+    f.write("        r6: &[\n")
+    data = ','.join('0x%016x' % chunk for chunk in r6)
+    format_table_content(f, data, 12)
+    f.write("\n        ],\n")
+
+    f.write("    };\n\n")
+    bytes_new += 256 + 992 + 256 + 8 * len(r3) + len(r5) + 8 * len(r6)
+
+def emit_property_module(f, mod, tbl, emit):
     f.write("pub mod %s {\n" % mod)
-    keys = tbl.keys()
-    keys.sort()
-    for cat in keys:
-        emit_table(f, "%s_table" % cat, tbl[cat])
-        if cat in emit_fn:
-            f.write("    pub fn %s(c: char) -> bool {\n" % cat)
-            f.write("        super::bsearch_range_table(c, %s_table)\n" % cat)
-            f.write("    }\n\n")
+    for cat in sorted(emit):
+        emit_bool_trie(f, "%s_table" % cat, tbl[cat])
+        f.write("    pub fn %s(c: char) -> bool {\n" % cat)
+        f.write("        super::trie_lookup_range_table(c, %s_table)\n" % cat)
+        f.write("    }\n\n")
     f.write("}\n\n")
 
-def emit_regex_module(f, cats, w_data):
-    f.write("pub mod regex {\n")
-    regex_class = "&'static [(char, char)]"
-    class_table = "&'static [(&'static str, &'static %s)]" % regex_class
-
-    emit_table(f, "UNICODE_CLASSES", cats, class_table,
-        pfun=lambda x: "(\"%s\",&super::%s::%s_table)" % (x[0], x[1], x[0]))
-
-    f.write("    pub static PERLD: &'static %s = &super::general_category::Nd_table;\n\n"
-            % regex_class)
-    f.write("    pub static PERLS: &'static %s = &super::property::White_Space_table;\n\n"
-            % regex_class)
-
-    emit_table(f, "PERLW", w_data, regex_class)
-
-    f.write("}\n\n")
-
-def emit_conversions_module(f, lowerupper, upperlower):
+def emit_conversions_module(f, to_upper, to_lower, to_title):
     f.write("pub mod conversions {")
     f.write("""
-    use core::cmp::Ordering::{Equal, Less, Greater};
-    use core::slice::SliceExt;
     use core::option::Option;
     use core::option::Option::{Some, None};
-    use core::slice;
 
-    pub fn to_lower(c: char) -> char {
-        match bsearch_case_table(c, LuLl_table) {
-          None        => c,
-          Some(index) => LuLl_table[index].1
+    pub fn to_lower(c: char) -> [char; 3] {
+        match bsearch_case_table(c, to_lowercase_table) {
+            None        => [c, '\\0', '\\0'],
+            Some(index) => to_lowercase_table[index].1,
         }
     }
 
-    pub fn to_upper(c: char) -> char {
-        match bsearch_case_table(c, LlLu_table) {
-            None        => c,
-            Some(index) => LlLu_table[index].1
+    pub fn to_upper(c: char) -> [char; 3] {
+        match bsearch_case_table(c, to_uppercase_table) {
+            None        => [c, '\\0', '\\0'],
+            Some(index) => to_uppercase_table[index].1,
         }
     }
 
-    fn bsearch_case_table(c: char, table: &'static [(char, char)]) -> Option<uint> {
-        match table.binary_search(|&(key, _)| {
-            if c == key { Equal }
-            else if key < c { Less }
-            else { Greater }
-        }) {
-            slice::BinarySearchResult::Found(i) => Some(i),
-            slice::BinarySearchResult::NotFound(_) => None,
-        }
+    fn bsearch_case_table(c: char, table: &'static [(char, [char; 3])]) -> Option<usize> {
+        table.binary_search_by(|&(key, _)| key.cmp(&c)).ok()
     }
 
 """)
-    emit_table(f, "LuLl_table",
-        sorted(upperlower.iteritems(), key=operator.itemgetter(0)), is_pub=False)
-    emit_table(f, "LlLu_table",
-        sorted(lowerupper.iteritems(), key=operator.itemgetter(0)), is_pub=False)
-    f.write("}\n\n")
-
-def emit_grapheme_module(f, grapheme_table, grapheme_cats):
-    f.write("""pub mod grapheme {
-    use core::kinds::Copy;
-    use core::slice::SliceExt;
-    pub use self::GraphemeCat::*;
-    use core::slice;
-
-    #[allow(non_camel_case_types)]
-    #[deriving(Clone)]
-    pub enum GraphemeCat {
-""")
-    for cat in grapheme_cats + ["Any"]:
-        f.write("        GC_" + cat + ",\n")
-    f.write("""    }
-
-    impl Copy for GraphemeCat {}
-
-    fn bsearch_range_value_table(c: char, r: &'static [(char, char, GraphemeCat)]) -> GraphemeCat {
-        use core::cmp::Ordering::{Equal, Less, Greater};
-        match r.binary_search(|&(lo, hi, _)| {
-            if lo <= c && c <= hi { Equal }
-            else if hi < c { Less }
-            else { Greater }
-        }) {
-            slice::BinarySearchResult::Found(idx) => {
-                let (_, _, cat) = r[idx];
-                cat
-            }
-            slice::BinarySearchResult::NotFound(_) => GC_Any
-        }
-    }
-
-    pub fn grapheme_category(c: char) -> GraphemeCat {
-        bsearch_range_value_table(c, grapheme_cat_table)
-    }
-
-""")
-
-    emit_table(f, "grapheme_cat_table", grapheme_table, "&'static [(char, char, GraphemeCat)]",
-        pfun=lambda x: "(%s,%s,GC_%s)" % (escape_char(x[0]), escape_char(x[1]), x[2]),
-        is_pub=False)
-    f.write("}\n")
-
-def emit_charwidth_module(f, width_table):
-    f.write("pub mod charwidth {\n")
-    f.write("    use core::option::Option;\n")
-    f.write("    use core::option::Option::{Some, None};\n")
-    f.write("    use core::slice::SliceExt;\n")
-    f.write("    use core::slice;\n")
-    f.write("""
-    fn bsearch_range_value_table(c: char, is_cjk: bool, r: &'static [(char, char, u8, u8)]) -> u8 {
-        use core::cmp::Ordering::{Equal, Less, Greater};
-        match r.binary_search(|&(lo, hi, _, _)| {
-            if lo <= c && c <= hi { Equal }
-            else if hi < c { Less }
-            else { Greater }
-        }) {
-            slice::BinarySearchResult::Found(idx) => {
-                let (_, _, r_ncjk, r_cjk) = r[idx];
-                if is_cjk { r_cjk } else { r_ncjk }
-            }
-            slice::BinarySearchResult::NotFound(_) => 1
-        }
-    }
-""")
-
-    f.write("""
-    pub fn width(c: char, is_cjk: bool) -> Option<uint> {
-        match c as uint {
-            _c @ 0 => Some(0),          // null is zero width
-            cu if cu < 0x20 => None,    // control sequences have no width
-            cu if cu < 0x7F => Some(1), // ASCII
-            cu if cu < 0xA0 => None,    // more control sequences
-            _ => Some(bsearch_range_value_table(c, is_cjk, charwidth_table) as uint)
-        }
-    }
-
-""")
-
-    f.write("    // character width table. Based on Markus Kuhn's free wcwidth() implementation,\n")
-    f.write("    //     http://www.cl.cam.ac.uk/~mgk25/ucs/wcwidth.c\n")
-    emit_table(f, "charwidth_table", width_table, "&'static [(char, char, u8, u8)]", is_pub=False,
-            pfun=lambda x: "(%s,%s,%s,%s)" % (escape_char(x[0]), escape_char(x[1]), x[2], x[3]))
+    t_type = "&'static [(char, [char; 3])]"
+    pfun = lambda x: "(%s,[%s,%s,%s])" % (
+        escape_char(x[0]), escape_char(x[1][0]), escape_char(x[1][1]), escape_char(x[1][2]))
+    emit_table(f, "to_lowercase_table",
+        sorted(to_lower.iteritems(), key=operator.itemgetter(0)),
+        is_pub=False, t_type = t_type, pfun=pfun)
+    emit_table(f, "to_uppercase_table",
+        sorted(to_upper.iteritems(), key=operator.itemgetter(0)),
+        is_pub=False, t_type = t_type, pfun=pfun)
     f.write("}\n\n")
 
 def emit_norm_module(f, canon, compat, combine, norm_props):
@@ -489,113 +500,6 @@ def emit_norm_module(f, canon, compat, combine, norm_props):
     canon_comp_keys = canon_comp.keys()
     canon_comp_keys.sort()
 
-    f.write("pub mod normalization {\n")
-
-    def mkdata_fun(table):
-        def f(char):
-            data = "(%s,&[" % escape_char(char)
-            first = True
-            for d in table[char]:
-                if not first:
-                    data += ","
-                first = False
-                data += escape_char(d)
-            data += "])"
-            return data
-        return f
-
-    f.write("    // Canonical decompositions\n")
-    emit_table(f, "canonical_table", canon_keys, "&'static [(char, &'static [char])]",
-        pfun=mkdata_fun(canon))
-
-    f.write("    // Compatibility decompositions\n")
-    emit_table(f, "compatibility_table", compat_keys, "&'static [(char, &'static [char])]",
-        pfun=mkdata_fun(compat))
-
-    def comp_pfun(char):
-        data = "(%s,&[" % escape_char(char)
-        canon_comp[char].sort(lambda x, y: x[0] - y[0])
-        first = True
-        for pair in canon_comp[char]:
-            if not first:
-                data += ","
-            first = False
-            data += "(%s,%s)" % (escape_char(pair[0]), escape_char(pair[1]))
-        data += "])"
-        return data
-
-    f.write("    // Canonical compositions\n")
-    emit_table(f, "composition_table", canon_comp_keys,
-        "&'static [(char, &'static [(char, char)])]", pfun=comp_pfun)
-
-    f.write("""
-    fn bsearch_range_value_table(c: char, r: &'static [(char, char, u8)]) -> u8 {
-        use core::cmp::Ordering::{Equal, Less, Greater};
-        use core::slice::SliceExt;
-        use core::slice;
-        match r.binary_search(|&(lo, hi, _)| {
-            if lo <= c && c <= hi { Equal }
-            else if hi < c { Less }
-            else { Greater }
-        }) {
-            slice::BinarySearchResult::Found(idx) => {
-                let (_, _, result) = r[idx];
-                result
-            }
-            slice::BinarySearchResult::NotFound(_) => 0
-        }
-    }\n
-""")
-
-    emit_table(f, "combining_class_table", combine, "&'static [(char, char, u8)]", is_pub=False,
-            pfun=lambda x: "(%s,%s,%s)" % (escape_char(x[0]), escape_char(x[1]), x[2]))
-
-    f.write("    pub fn canonical_combining_class(c: char) -> u8 {\n"
-        + "        bsearch_range_value_table(c, combining_class_table)\n"
-        + "    }\n")
-
-    f.write("""
-}
-
-""")
-
-def remove_from_wtable(wtable, val):
-    wtable_out = []
-    while wtable:
-        if wtable[0][1] < val:
-            wtable_out.append(wtable.pop(0))
-        elif wtable[0][0] > val:
-            break
-        else:
-            (wt_lo, wt_hi, width, width_cjk) = wtable.pop(0)
-            if wt_lo == wt_hi == val:
-                continue
-            elif wt_lo == val:
-                wtable_out.append((wt_lo+1, wt_hi, width, width_cjk))
-            elif wt_hi == val:
-                wtable_out.append((wt_lo, wt_hi-1, width, width_cjk))
-            else:
-                wtable_out.append((wt_lo, val-1, width, width_cjk))
-                wtable_out.append((val+1, wt_hi, width, width_cjk))
-    if wtable:
-        wtable_out.extend(wtable)
-    return wtable_out
-
-
-
-def optimize_width_table(wtable):
-    wtable_out = []
-    w_this = wtable.pop(0)
-    while wtable:
-        if w_this[1] == wtable[0][0] - 1 and w_this[2:3] == wtable[0][2:3]:
-            w_tmp = wtable.pop(0)
-            w_this = (w_this[0], w_tmp[1], w_tmp[2], w_tmp[3])
-        else:
-            wtable_out.append(w_this)
-            w_this = wtable.pop(0)
-    wtable_out.append(w_this)
-    return wtable_out
-
 if __name__ == "__main__":
     r = "tables.rs"
     if os.path.exists(r):
@@ -611,111 +515,32 @@ if __name__ == "__main__":
             unicode_version = re.search(pattern, readme.read()).groups()
         rf.write("""
 /// The version of [Unicode](http://www.unicode.org/)
-/// that the `UnicodeChar` and `UnicodeStrPrelude` traits are based on.
-pub const UNICODE_VERSION: (uint, uint, uint) = (%s, %s, %s);
+/// that the unicode parts of `CharExt` and `UnicodeStrPrelude` traits are based on.
+pub const UNICODE_VERSION: (u64, u64, u64) = (%s, %s, %s);
 """ % unicode_version)
         (canon_decomp, compat_decomp, gencats, combines,
-                lowerupper, upperlower) = load_unicode_data("UnicodeData.txt")
-        want_derived = ["XID_Start", "XID_Continue", "Alphabetic", "Lowercase", "Uppercase"]
-        other_derived = ["Default_Ignorable_Code_Point", "Grapheme_Extend"]
-        derived = load_properties("DerivedCoreProperties.txt", want_derived + other_derived)
+                to_upper, to_lower, to_title) = load_unicode_data("UnicodeData.txt")
+        load_special_casing("SpecialCasing.txt", to_upper, to_lower, to_title)
+        want_derived = ["XID_Start", "XID_Continue", "Alphabetic", "Lowercase", "Uppercase",
+                        "Cased", "Case_Ignorable"]
+        derived = load_properties("DerivedCoreProperties.txt", want_derived)
         scripts = load_properties("Scripts.txt", [])
         props = load_properties("PropList.txt",
-                ["White_Space", "Join_Control", "Noncharacter_Code_Point"])
+                ["White_Space", "Join_Control", "Noncharacter_Code_Point", "Pattern_White_Space"])
         norm_props = load_properties("DerivedNormalizationProps.txt",
                      ["Full_Composition_Exclusion"])
 
-        # grapheme cluster category from DerivedCoreProperties
-        # the rest are defined below
-        grapheme_cats = {}
-        grapheme_cats["Extend"] = derived["Grapheme_Extend"]
-        del(derived["Grapheme_Extend"])
+        # trie_lookup_table is used in all the property modules below
+        emit_trie_lookup_range_table(rf)
+        # emit_bsearch_range_table(rf)
 
-        # bsearch_range_table is used in all the property modules below
-        emit_bsearch_range_table(rf)
-
-        # all of these categories will also be available as \p{} in libregex
-        allcats = []
+        # category tables
         for (name, cat, pfuns) in ("general_category", gencats, ["N", "Cc"]), \
                                   ("derived_property", derived, want_derived), \
-                                  ("script", scripts, []), \
-                                  ("property", props, ["White_Space"]):
+                                  ("property", props, ["White_Space", "Pattern_White_Space"]):
             emit_property_module(rf, name, cat, pfuns)
-            allcats.extend(map(lambda x: (x, name), cat))
-        allcats.sort(key=lambda c: c[0])
-
-        # the \w regex corresponds to Alphabetic + Mark + Decimal_Number +
-        # Connector_Punctuation + Join-Control according to UTS#18
-        # http://www.unicode.org/reports/tr18/#Compatibility_Properties
-        perl_words = []
-        for cat in derived["Alphabetic"], gencats["M"], gencats["Nd"], \
-                   gencats["Pc"], props["Join_Control"]:
-            perl_words.extend(ungroup_cat(cat))
-        perl_words = group_cat(perl_words)
-
-        # emit lookup tables for \p{}, along with \d, \w, and \s for libregex
-        emit_regex_module(rf, allcats, perl_words)
 
         # normalizations and conversions module
         emit_norm_module(rf, canon_decomp, compat_decomp, combines, norm_props)
-        emit_conversions_module(rf, lowerupper, upperlower)
-
-        ### character width module
-        width_table = []
-        for zwcat in ["Me", "Mn", "Cf"]:
-            width_table.extend(map(lambda (lo, hi): (lo, hi, 0, 0), gencats[zwcat]))
-        width_table.append((4448, 4607, 0, 0))
-
-        # get widths, except those that are explicitly marked zero-width above
-        ea_widths = load_east_asian_width(["W", "F", "A"], ["Me", "Mn", "Cf"])
-        # these are doublewidth
-        for dwcat in ["W", "F"]:
-            width_table.extend(map(lambda (lo, hi): (lo, hi, 2, 2), ea_widths[dwcat]))
-        width_table.extend(map(lambda (lo, hi): (lo, hi, 1, 2), ea_widths["A"]))
-
-        width_table.sort(key=lambda w: w[0])
-
-        # soft hyphen is not zero width in preformatted text; it's used to indicate
-        # a hyphen inserted to facilitate a linebreak.
-        width_table = remove_from_wtable(width_table, 173)
-
-        # optimize the width table by collapsing adjacent entities when possible
-        width_table = optimize_width_table(width_table)
-        emit_charwidth_module(rf, width_table)
-
-        ### grapheme cluster module
-        # from http://www.unicode.org/reports/tr29/#Grapheme_Cluster_Break_Property_Values
-        # Hangul syllable categories
-        want_hangul = ["L", "V", "T", "LV", "LVT"]
-        grapheme_cats.update(load_properties("HangulSyllableType.txt", want_hangul))
-
-        # Control
-        # This category also includes Cs (surrogate codepoints), but Rust's `char`s are
-        # Unicode Scalar Values only, and surrogates are thus invalid `char`s.
-        grapheme_cats["Control"] = set()
-        for cat in ["Zl", "Zp", "Cc", "Cf"]:
-            grapheme_cats["Control"] |= set(ungroup_cat(gencats[cat]))
-        grapheme_cats["Control"] = group_cat(list(
-            grapheme_cats["Control"]
-            - grapheme_control_exceptions
-            | (set(ungroup_cat(gencats["Cn"]))
-               & set(ungroup_cat(derived["Default_Ignorable_Code_Point"])))))
-
-        # Regional Indicator
-        grapheme_cats["RegionalIndicator"] = grapheme_regional_indicator
-
-        # Prepend - "Currently there are no characters with this value"
-        # (from UAX#29, Unicode 7.0)
-
-        # SpacingMark
-        grapheme_cats["SpacingMark"] = group_cat(list(
-            set(ungroup_cat(gencats["Mc"]))
-            - set(ungroup_cat(grapheme_cats["Extend"]))
-            | grapheme_spacingmark_extra
-            - set(ungroup_cat(grapheme_spacingmark_exceptions))))
-
-        grapheme_table = []
-        for cat in grapheme_cats:
-            grapheme_table.extend([(x, y, cat) for (x, y) in grapheme_cats[cat]])
-        grapheme_table.sort(key=lambda w: w[0])
-        emit_grapheme_module(rf, grapheme_table, grapheme_cats.keys())
+        emit_conversions_module(rf, to_upper, to_lower, to_title)
+    #print 'bytes before = %d, bytes after = %d' % (bytes_old, bytes_new)

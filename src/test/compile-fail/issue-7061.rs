@@ -12,7 +12,10 @@ struct BarStruct;
 
 impl<'a> BarStruct {
     fn foo(&'a mut self) -> Box<BarStruct> { self }
-    //~^ ERROR: error: mismatched types: expected `Box<BarStruct>`, found `&'a mut BarStruct
+    //~^ ERROR mismatched types
+    //~| expected type `Box<BarStruct>`
+    //~| found type `&'a mut BarStruct`
+    //~| expected box, found mutable reference
 }
 
 fn main() {}

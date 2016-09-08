@@ -8,19 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![macro_escape]
 #![doc(hidden)]
 
-macro_rules! uint_module (($T:ty, $T_SIGNED:ty, $bits:expr) => (
+macro_rules! uint_module { ($T:ident, $bits:expr) => (
 
-#[unstable]
-pub const BITS : uint = $bits;
-#[unstable]
-pub const BYTES : uint = ($bits / 8);
+/// The smallest value that can be represented by this integer type.
+#[stable(feature = "rust1", since = "1.0.0")]
+pub const MIN: $T = $T::min_value();
+/// The largest value that can be represented by this integer type.
+#[stable(feature = "rust1", since = "1.0.0")]
+pub const MAX: $T = $T::max_value();
 
-#[unstable]
-pub const MIN: $T = 0 as $T;
-#[unstable]
-pub const MAX: $T = 0 as $T - 1 as $T;
-
-))
+) }

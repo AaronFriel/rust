@@ -10,7 +10,7 @@
 
 fn g<X>(x: X) -> X { return x; }
 
-#[deriving(Clone)]
+#[derive(Clone)]
 struct Pair<T> {
     a: T,
     b: T
@@ -22,7 +22,7 @@ fn f<T:Clone>(t: T) -> Pair<T> {
 }
 
 pub fn main() {
-    let b = f::<int>(10);
+    let b = f::<isize>(10);
     println!("{}" ,b.a);
     println!("{}", b.b);
     assert_eq!(b.a, 10);

@@ -8,25 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
-// Test that `F : Fn(int) -> int + Send` is interpreted as two
+// Test that `F : Fn(isize) -> isize + Send` is interpreted as two
 // distinct bounds on `F`.
 
 fn foo1<F>(f: F)
-    where F : FnOnce(int) -> int + Send
+    where F : FnOnce(isize) -> isize + Send
 {
     bar(f);
 }
 
 fn foo2<F>(f: F)
-    where F : FnOnce(int) -> int + Send
+    where F : FnOnce(isize) -> isize + Send
 {
     baz(f);
 }
 
 fn bar<F:Send>(f: F) { }
 
-fn baz<F:FnOnce(int) -> int>(f: F) { }
+fn baz<F:FnOnce(isize) -> isize>(f: F) { }
 
 fn main() {}

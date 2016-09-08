@@ -9,14 +9,13 @@
 // except according to those terms.
 mod foo {
     enum Bar {
-        Baz { a: int }
+        Baz { a: isize }
     }
 }
 
 fn f(b: foo::Bar) { //~ ERROR enum `Bar` is private
     match b {
-        foo::Bar::Baz { a: _a } => {} //~ ERROR variant `Baz` is inaccessible
-        // ^~ ERROR enum `Bar` is private
+        foo::Bar::Baz { a: _a } => {} //~ ERROR enum `Bar` is private
     }
 }
 

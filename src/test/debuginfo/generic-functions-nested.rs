@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -70,8 +69,12 @@
 // lldb-check:[...]$7 = 2.5
 // lldb-command:continue
 
+
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
 fn outer<TA: Clone>(a: TA) {
-    inner(a.clone(), 1i);
+    inner(a.clone(), 1);
     inner(a.clone(), 2.5f64);
 
     fn inner<TX, TY>(x: TX, y: TY) {
@@ -80,7 +83,7 @@ fn outer<TA: Clone>(a: TA) {
 }
 
 fn main() {
-    outer(-1i);
+    outer(-1);
     outer(-2.5f64);
 }
 

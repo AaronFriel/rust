@@ -18,9 +18,9 @@ impl<'a> T+'a {
     fn foo(&self) {}
 }
 
-impl T for int {}
+impl T for i32 {}
 
 fn main() {
-    let x = &42i;
-    x.foo(); //~ERROR: type `&int` does not implement any method in scope named `foo`
+    let x = &42i32;
+    x.foo(); //~ERROR: no method named `foo` found for type `&i32` in the current scope
 }

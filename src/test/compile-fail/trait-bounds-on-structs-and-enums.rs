@@ -15,53 +15,39 @@ struct Foo<T:Trait> {
 }
 
 enum Bar<T:Trait> {
-    ABar(int),
+    ABar(isize),
     BBar(T),
-    CBar(uint),
+    CBar(usize),
 }
 
-fn explode(x: Foo<u32>) {}
-//~^ ERROR not implemented
-
-fn kaboom(y: Bar<f32>) {}
-//~^ ERROR not implemented
-
 impl<T> Foo<T> {
-//~^ ERROR the trait `Trait` is not implemented
+//~^ ERROR `T: Trait` is not satisfied
     fn uhoh() {}
 }
 
 struct Baz {
-//~^ ERROR not implemented
-    a: Foo<int>,
+    a: Foo<isize>, //~ ERROR E0277
 }
 
 enum Boo {
-//~^ ERROR not implemented
-    Quux(Bar<uint>),
+    Quux(Bar<usize>), //~ ERROR E0277
 }
 
-struct Badness<T> {
-//~^ ERROR not implemented
-    b: Foo<T>,
+struct Badness<U> {
+    b: Foo<U>, //~ ERROR E0277
 }
 
-enum MoreBadness<T> {
-//~^ ERROR not implemented
-    EvenMoreBadness(Bar<T>),
+enum MoreBadness<V> {
+    EvenMoreBadness(Bar<V>), //~ ERROR E0277
 }
 
-trait PolyTrait<T> {
-    fn whatever() {}
-}
+struct TupleLike(
+    Foo<i32>, //~ ERROR E0277
+);
 
-struct Struct;
-
-impl PolyTrait<Foo<uint>> for Struct {
-//~^ ERROR not implemented
-    fn whatever() {}
+enum Enum {
+    DictionaryLike { field: Bar<u8> }, //~ ERROR E0277
 }
 
 fn main() {
 }
-

@@ -8,12 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
-
-fn with_int(f: &mut FnMut(&int)) {
+fn with_int(f: &mut FnMut(&isize)) {
 }
 
 fn main() {
-    let mut x: Option<&int> = None;
-    with_int(&mut |&mut: y| x = Some(y));   //~ ERROR cannot infer
+    let mut x: Option<&isize> = None;
+    with_int(&mut |y| x = Some(y));   //~ ERROR cannot infer
 }

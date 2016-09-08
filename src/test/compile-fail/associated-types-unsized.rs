@@ -8,17 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(associated_types)]
-
 trait Get {
-    type Sized? Value;
+    type Value: ?Sized;
     fn get(&self) -> <Self as Get>::Value;
 }
 
 fn foo<T:Get>(t: T) {
-    let x = t.get(); //~ ERROR the trait `core::kinds::Sized` is not implemented
+    let x = t.get(); //~ ERROR `<T as Get>::Value: std::marker::Sized` is not
 }
 
 fn main() {
 }
-

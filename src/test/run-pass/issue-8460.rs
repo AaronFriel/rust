@@ -8,28 +8,43 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::{int, i8, i16, i32, i64};
-use std::task;
+// ignore-emscripten no threads support
+// ignore-pretty : (#23623) problems when  ending with // comments
+
+#![feature(rustc_attrs, stmt_expr_attributes, zero_one)]
+
+use std::num::Zero;
+use std::thread;
+
+macro_rules! check {
+    ($($e:expr),*) => {
+        $(assert!(thread::spawn({
+            move|| { $e; }
+        }).join().is_err());)*
+    }
+}
 
 fn main() {
-    assert!(task::try(move|| int::MIN / -1).is_err());
-    assert!(task::try(move|| i8::MIN / -1).is_err());
-    assert!(task::try(move|| i16::MIN / -1).is_err());
-    assert!(task::try(move|| i32::MIN / -1).is_err());
-    assert!(task::try(move|| i64::MIN / -1).is_err());
-    assert!(task::try(move|| 1i / 0).is_err());
-    assert!(task::try(move|| 1i8 / 0).is_err());
-    assert!(task::try(move|| 1i16 / 0).is_err());
-    assert!(task::try(move|| 1i32 / 0).is_err());
-    assert!(task::try(move|| 1i64 / 0).is_err());
-    assert!(task::try(move|| int::MIN % -1).is_err());
-    assert!(task::try(move|| i8::MIN % -1).is_err());
-    assert!(task::try(move|| i16::MIN % -1).is_err());
-    assert!(task::try(move|| i32::MIN % -1).is_err());
-    assert!(task::try(move|| i64::MIN % -1).is_err());
-    assert!(task::try(move|| 1i % 0).is_err());
-    assert!(task::try(move|| 1i8 % 0).is_err());
-    assert!(task::try(move|| 1i16 % 0).is_err());
-    assert!(task::try(move|| 1i32 % 0).is_err());
-    assert!(task::try(move|| 1i64 % 0).is_err());
+    check![
+        isize::min_value() / -1,
+        i8::min_value() / -1,
+        i16::min_value() / -1,
+        i32::min_value() / -1,
+        i64::min_value() / -1,
+        1isize / isize::zero(),
+        1i8 / i8::zero(),
+        1i16 / i16::zero(),
+        1i32 / i32::zero(),
+        1i64 / i64::zero(),
+        isize::min_value() % -1,
+        i8::min_value() % -1,
+        i16::min_value() % -1,
+        i32::min_value() % -1,
+        i64::min_value() % -1,
+        1isize % isize::zero(),
+        1i8 % i8::zero(),
+        1i16 % i16::zero(),
+        1i32 % i32::zero(),
+        1i64 % i64::zero()
+    ];
 }

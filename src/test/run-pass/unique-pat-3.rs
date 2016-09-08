@@ -8,7 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-enum bar { u(Box<int>), w(int), }
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+enum bar { u(Box<isize>), w(isize), }
 
 pub fn main() {
     assert!(match bar::u(box 10) {

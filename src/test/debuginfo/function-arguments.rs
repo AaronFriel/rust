@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -45,6 +44,10 @@
 // lldb-check:[...]$3 = 3000
 // lldb-command:continue
 
+
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
 fn main() {
 
     fun(111102, true);
@@ -56,7 +59,7 @@ fn main() {
     }
 }
 
-fn fun(x: int, y: bool) -> (int, bool) {
+fn fun(x: isize, y: bool) -> (isize, bool) {
     zzz(); // #break
 
     (x, y)

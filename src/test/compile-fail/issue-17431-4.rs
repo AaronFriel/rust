@@ -8,8 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-struct Foo<T> { foo: Option<Option<Foo<T>>> }
-//~^ ERROR illegal recursive struct type; wrap the inner value in a box to make it representable
+use std::marker;
+
+struct Foo<T> { foo: Option<Option<Foo<T>>>, marker: marker::PhantomData<T> }
+//~^ ERROR recursive type `Foo` has infinite size
 
 impl<T> Foo<T> { fn bar(&self) {} }
 

@@ -7,8 +7,6 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15679
 
 //! Hex binary-to-text encoding
 
@@ -18,20 +16,22 @@ use std::fmt;
 use std::error;
 
 /// A trait for converting a value to hexadecimal encoding
-pub trait ToHex for Sized? {
+pub trait ToHex {
     /// Converts the value of `self` to a hex value, returning the owned
     /// string.
     fn to_hex(&self) -> String;
 }
 
-static CHARS: &'static[u8] = b"0123456789abcdef";
+const CHARS: &'static [u8] = b"0123456789abcdef";
 
 impl ToHex for [u8] {
     /// Turn a vector of `u8` bytes into a hexadecimal string.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// #![feature(rustc_private)]
+    ///
     /// extern crate serialize;
     /// use serialize::hex::ToHex;
     ///
@@ -42,9 +42,9 @@ impl ToHex for [u8] {
     /// ```
     fn to_hex(&self) -> String {
         let mut v = Vec::with_capacity(self.len() * 2);
-        for &byte in self.iter() {
-            v.push(CHARS[(byte >> 4) as uint]);
-            v.push(CHARS[(byte & 0xf) as uint]);
+        for &byte in self {
+            v.push(CHARS[(byte >> 4) as usize]);
+            v.push(CHARS[(byte & 0xf) as usize]);
         }
 
         unsafe {
@@ -54,23 +54,22 @@ impl ToHex for [u8] {
 }
 
 /// A trait for converting hexadecimal encoded values
-pub trait FromHex for Sized? {
+pub trait FromHex {
     /// Converts the value of `self`, interpreted as hexadecimal encoded data,
     /// into an owned vector of bytes, returning the vector.
     fn from_hex(&self) -> Result<Vec<u8>, FromHexError>;
 }
 
 /// Errors that can occur when decoding a hex encoded string
+#[derive(Copy, Clone, Debug)]
 pub enum FromHexError {
     /// The input contained a character not part of the hex format
-    InvalidHexCharacter(char, uint),
+    InvalidHexCharacter(char, usize),
     /// The input had an invalid length
     InvalidHexLength,
 }
 
-impl Copy for FromHexError {}
-
-impl fmt::Show for FromHexError {
+impl fmt::Display for FromHexError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             InvalidHexCharacter(ch, idx) =>
@@ -83,13 +82,9 @@ impl fmt::Show for FromHexError {
 impl error::Error for FromHexError {
     fn description(&self) -> &str {
         match *self {
-            InvalidHexCharacter(_, _) => "invalid character",
+            InvalidHexCharacter(..) => "invalid character",
             InvalidHexLength => "invalid length",
         }
-    }
-
-    fn detail(&self) -> Option<String> {
-        Some(self.to_string())
     }
 }
 
@@ -101,19 +96,21 @@ impl FromHex for str {
     /// You can use the `String::from_utf8` function to turn a
     /// `Vec<u8>` into a string with characters corresponding to those values.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// This converts a string literal to hexadecimal and back.
     ///
-    /// ```rust
+    /// ```
+    /// #![feature(rustc_private)]
+    ///
     /// extern crate serialize;
     /// use serialize::hex::{FromHex, ToHex};
     ///
     /// fn main () {
     ///     let hello_str = "Hello, World".as_bytes().to_hex();
     ///     println!("{}", hello_str);
-    ///     let bytes = hello_str.as_slice().from_hex().unwrap();
-    ///     println!("{}", bytes);
+    ///     let bytes = hello_str.from_hex().unwrap();
+    ///     println!("{:?}", bytes);
     ///     let result_str = String::from_utf8(bytes).unwrap();
     ///     println!("{}", result_str);
     /// }
@@ -121,8 +118,8 @@ impl FromHex for str {
     fn from_hex(&self) -> Result<Vec<u8>, FromHexError> {
         // This may be an overestimate if there is any whitespace
         let mut b = Vec::with_capacity(self.len() / 2);
-        let mut modulus = 0i;
-        let mut buf = 0u8;
+        let mut modulus = 0;
+        let mut buf = 0;
 
         for (idx, byte) in self.bytes().enumerate() {
             buf <<= 4;
@@ -135,7 +132,10 @@ impl FromHex for str {
                     buf >>= 4;
                     continue
                 }
-                _ => return Err(InvalidHexCharacter(self.char_at(idx), idx)),
+                _ => {
+                    let ch = self[idx..].chars().next().unwrap();
+                    return Err(InvalidHexCharacter(ch, idx))
+                }
             }
 
             modulus += 1;
@@ -190,19 +190,19 @@ mod tests {
 
     #[test]
     pub fn test_to_hex_all_bytes() {
-        for i in range(0u, 256) {
-            assert_eq!([i as u8].to_hex(), format!("{:02x}", i as uint));
+        for i in 0..256 {
+            assert_eq!([i as u8].to_hex(), format!("{:02x}", i as usize));
         }
     }
 
     #[test]
     pub fn test_from_hex_all_bytes() {
-        for i in range(0u, 256) {
+        for i in 0..256 {
             let ii: &[u8] = &[i as u8];
-            assert_eq!(format!("{:02x}", i as uint).from_hex()
+            assert_eq!(format!("{:02x}", i as usize).from_hex()
                                                    .unwrap(),
                        ii);
-            assert_eq!(format!("{:02X}", i as uint).from_hex()
+            assert_eq!(format!("{:02X}", i as usize).from_hex()
                                                    .unwrap(),
                        ii);
         }

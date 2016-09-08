@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -16,13 +15,16 @@
 // lldb-command:run
 
 #![allow(unused_variables)]
+#![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 trait Trait {
-    fn method(&self) -> int { 0 }
+    fn method(&self) -> isize { 0 }
 }
 
 struct Struct {
-    a: int,
+    a: isize,
     b: f64
 }
 

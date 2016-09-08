@@ -8,96 +8,350 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// FIXME: move various extern bindings from here into liblibc or
-// something similar
+//! Implementation of `std::os` functionality for Windows
 
-use libc;
-use libc::{c_int, c_char, c_void};
-use prelude::*;
-use io::{IoResult, IoError};
-use sys::fs::FileDesc;
+#![allow(bad_style)]
+
+use os::windows::prelude::*;
+
+use error::Error as StdError;
+use ffi::{OsString, OsStr};
+use fmt;
+use io;
+use libc::{c_int, c_void};
+use ops::Range;
+use os::windows::ffi::EncodeWide;
+use path::{self, PathBuf};
 use ptr;
+use slice;
+use sys::{c, cvt};
+use sys::handle::Handle;
 
-use os::TMPBUF_SZ;
+use super::to_u16s;
 
-pub fn errno() -> uint {
-    use libc::types::os::arch::extra::DWORD;
-
-    #[link_name = "kernel32"]
-    extern "system" {
-        fn GetLastError() -> DWORD;
-    }
-
-    unsafe {
-        GetLastError() as uint
-    }
+pub fn errno() -> i32 {
+    unsafe { c::GetLastError() as i32 }
 }
 
-/// Get a detailed string description for the given error number
+/// Gets a detailed string description for the given error number.
 pub fn error_string(errnum: i32) -> String {
-    use libc::types::os::arch::extra::DWORD;
-    use libc::types::os::arch::extra::LPWSTR;
-    use libc::types::os::arch::extra::LPVOID;
-    use libc::types::os::arch::extra::WCHAR;
-
-    #[link_name = "kernel32"]
-    extern "system" {
-        fn FormatMessageW(flags: DWORD,
-                          lpSrc: LPVOID,
-                          msgId: DWORD,
-                          langId: DWORD,
-                          buf: LPWSTR,
-                          nsize: DWORD,
-                          args: *const c_void)
-                          -> DWORD;
-    }
-
-    static FORMAT_MESSAGE_FROM_SYSTEM: DWORD = 0x00001000;
-    static FORMAT_MESSAGE_IGNORE_INSERTS: DWORD = 0x00000200;
-
     // This value is calculated from the macro
     // MAKELANGID(LANG_SYSTEM_DEFAULT, SUBLANG_SYS_DEFAULT)
-    let langId = 0x0800 as DWORD;
+    let langId = 0x0800 as c::DWORD;
 
-    let mut buf = [0 as WCHAR, ..TMPBUF_SZ];
+    let mut buf = [0 as c::WCHAR; 2048];
 
     unsafe {
-        let res = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM |
-                                 FORMAT_MESSAGE_IGNORE_INSERTS,
-                                 ptr::null_mut(),
-                                 errnum as DWORD,
-                                 langId,
-                                 buf.as_mut_ptr(),
-                                 buf.len() as DWORD,
-                                 ptr::null());
+        let res = c::FormatMessageW(c::FORMAT_MESSAGE_FROM_SYSTEM |
+                                        c::FORMAT_MESSAGE_IGNORE_INSERTS,
+                                    ptr::null_mut(),
+                                    errnum as c::DWORD,
+                                    langId,
+                                    buf.as_mut_ptr(),
+                                    buf.len() as c::DWORD,
+                                    ptr::null()) as usize;
         if res == 0 {
             // Sometimes FormatMessageW can fail e.g. system doesn't like langId,
             let fm_err = errno();
-            return format!("OS Error {} (FormatMessageW() returned error {})", errnum, fm_err);
+            return format!("OS Error {} (FormatMessageW() returned error {})",
+                           errnum, fm_err);
         }
 
-        let msg = String::from_utf16(::str::truncate_utf16_at_nul(&buf));
-        match msg {
-            Some(msg) => format!("OS Error {}: {}", errnum, msg),
-            None => format!("OS Error {} (FormatMessageW() returned invalid UTF-16)", errnum),
+        match String::from_utf16(&buf[..res]) {
+            Ok(mut msg) => {
+                // Trim trailing CRLF inserted by FormatMessageW
+                let len = msg.trim_right().len();
+                msg.truncate(len);
+                msg
+            },
+            Err(..) => format!("OS Error {} (FormatMessageW() returned \
+                                invalid UTF-16)", errnum),
         }
     }
 }
 
-pub unsafe fn pipe() -> IoResult<(FileDesc, FileDesc)> {
-    // Windows pipes work subtly differently than unix pipes, and their
-    // inheritance has to be handled in a different way that I do not
-    // fully understand. Here we explicitly make the pipe non-inheritable,
-    // which means to pass it to a subprocess they need to be duplicated
-    // first, as in std::run.
-    let mut fds = [0, ..2];
-    match libc::pipe(fds.as_mut_ptr(), 1024 as ::libc::c_uint,
-                     (libc::O_BINARY | libc::O_NOINHERIT) as c_int) {
-        0 => {
-            assert!(fds[0] != -1 && fds[0] != 0);
-            assert!(fds[1] != -1 && fds[1] != 0);
-            Ok((FileDesc::new(fds[0], true), FileDesc::new(fds[1], true)))
+pub struct Env {
+    base: c::LPWCH,
+    cur: c::LPWCH,
+}
+
+impl Iterator for Env {
+    type Item = (OsString, OsString);
+
+    fn next(&mut self) -> Option<(OsString, OsString)> {
+        loop {
+            unsafe {
+                if *self.cur == 0 { return None }
+                let p = &*self.cur as *const u16;
+                let mut len = 0;
+                while *p.offset(len) != 0 {
+                    len += 1;
+                }
+                let s = slice::from_raw_parts(p, len as usize);
+                self.cur = self.cur.offset(len + 1);
+
+                // Windows allows environment variables to start with an equals
+                // symbol (in any other position, this is the separator between
+                // variable name and value). Since`s` has at least length 1 at
+                // this point (because the empty string terminates the array of
+                // environment variables), we can safely slice.
+                let pos = match s[1..].iter().position(|&u| u == b'=' as u16).map(|p| p + 1) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                return Some((
+                    OsStringExt::from_wide(&s[..pos]),
+                    OsStringExt::from_wide(&s[pos+1..]),
+                ))
+            }
         }
-        _ => Err(IoError::last_error()),
     }
+}
+
+impl Drop for Env {
+    fn drop(&mut self) {
+        unsafe { c::FreeEnvironmentStringsW(self.base); }
+    }
+}
+
+pub fn env() -> Env {
+    unsafe {
+        let ch = c::GetEnvironmentStringsW();
+        if ch as usize == 0 {
+            panic!("failure getting env string from OS: {}",
+                   io::Error::last_os_error());
+        }
+        Env { base: ch, cur: ch }
+    }
+}
+
+pub struct SplitPaths<'a> {
+    data: EncodeWide<'a>,
+    must_yield: bool,
+}
+
+pub fn split_paths(unparsed: &OsStr) -> SplitPaths {
+    SplitPaths {
+        data: unparsed.encode_wide(),
+        must_yield: true,
+    }
+}
+
+impl<'a> Iterator for SplitPaths<'a> {
+    type Item = PathBuf;
+    fn next(&mut self) -> Option<PathBuf> {
+        // On Windows, the PATH environment variable is semicolon separated.
+        // Double quotes are used as a way of introducing literal semicolons
+        // (since c:\some;dir is a valid Windows path). Double quotes are not
+        // themselves permitted in path names, so there is no way to escape a
+        // double quote.  Quoted regions can appear in arbitrary locations, so
+        //
+        //   c:\foo;c:\som"e;di"r;c:\bar
+        //
+        // Should parse as [c:\foo, c:\some;dir, c:\bar].
+        //
+        // (The above is based on testing; there is no clear reference available
+        // for the grammar.)
+
+
+        let must_yield = self.must_yield;
+        self.must_yield = false;
+
+        let mut in_progress = Vec::new();
+        let mut in_quote = false;
+        for b in self.data.by_ref() {
+            if b == '"' as u16 {
+                in_quote = !in_quote;
+            } else if b == ';' as u16 && !in_quote {
+                self.must_yield = true;
+                break
+            } else {
+                in_progress.push(b)
+            }
+        }
+
+        if !must_yield && in_progress.is_empty() {
+            None
+        } else {
+            Some(super::os2path(&in_progress))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct JoinPathsError;
+
+pub fn join_paths<I, T>(paths: I) -> Result<OsString, JoinPathsError>
+    where I: Iterator<Item=T>, T: AsRef<OsStr>
+{
+    let mut joined = Vec::new();
+    let sep = b';' as u16;
+
+    for (i, path) in paths.enumerate() {
+        let path = path.as_ref();
+        if i > 0 { joined.push(sep) }
+        let v = path.encode_wide().collect::<Vec<u16>>();
+        if v.contains(&(b'"' as u16)) {
+            return Err(JoinPathsError)
+        } else if v.contains(&sep) {
+            joined.push(b'"' as u16);
+            joined.extend_from_slice(&v[..]);
+            joined.push(b'"' as u16);
+        } else {
+            joined.extend_from_slice(&v[..]);
+        }
+    }
+
+    Ok(OsStringExt::from_wide(&joined[..]))
+}
+
+impl fmt::Display for JoinPathsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        "path segment contains `\"`".fmt(f)
+    }
+}
+
+impl StdError for JoinPathsError {
+    fn description(&self) -> &str { "failed to join paths" }
+}
+
+pub fn current_exe() -> io::Result<PathBuf> {
+    super::fill_utf16_buf(|buf, sz| unsafe {
+        c::GetModuleFileNameW(ptr::null_mut(), buf, sz)
+    }, super::os2path)
+}
+
+pub fn getcwd() -> io::Result<PathBuf> {
+    super::fill_utf16_buf(|buf, sz| unsafe {
+        c::GetCurrentDirectoryW(sz, buf)
+    }, super::os2path)
+}
+
+pub fn chdir(p: &path::Path) -> io::Result<()> {
+    let p: &OsStr = p.as_ref();
+    let mut p = p.encode_wide().collect::<Vec<_>>();
+    p.push(0);
+
+    cvt(unsafe {
+        c::SetCurrentDirectoryW(p.as_ptr())
+    }).map(|_| ())
+}
+
+pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
+    let k = to_u16s(k)?;
+    let res = super::fill_utf16_buf(|buf, sz| unsafe {
+        c::GetEnvironmentVariableW(k.as_ptr(), buf, sz)
+    }, |buf| {
+        OsStringExt::from_wide(buf)
+    });
+    match res {
+        Ok(value) => Ok(Some(value)),
+        Err(e) => {
+            if e.raw_os_error() == Some(c::ERROR_ENVVAR_NOT_FOUND as i32) {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
+    let k = to_u16s(k)?;
+    let v = to_u16s(v)?;
+
+    cvt(unsafe {
+        c::SetEnvironmentVariableW(k.as_ptr(), v.as_ptr())
+    }).map(|_| ())
+}
+
+pub fn unsetenv(n: &OsStr) -> io::Result<()> {
+    let v = to_u16s(n)?;
+    cvt(unsafe {
+        c::SetEnvironmentVariableW(v.as_ptr(), ptr::null())
+    }).map(|_| ())
+}
+
+pub struct Args {
+    range: Range<isize>,
+    cur: *mut *mut u16,
+}
+
+unsafe fn os_string_from_ptr(ptr: *mut u16) -> OsString {
+    let mut len = 0;
+    while *ptr.offset(len) != 0 { len += 1; }
+
+    // Push it onto the list.
+    let ptr = ptr as *const u16;
+    let buf = slice::from_raw_parts(ptr, len as usize);
+    OsStringExt::from_wide(buf)
+}
+
+impl Iterator for Args {
+    type Item = OsString;
+    fn next(&mut self) -> Option<OsString> {
+        self.range.next().map(|i| unsafe { os_string_from_ptr(*self.cur.offset(i)) } )
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.range.size_hint() }
+}
+
+impl DoubleEndedIterator for Args {
+    fn next_back(&mut self) -> Option<OsString> {
+        self.range.next_back().map(|i| unsafe { os_string_from_ptr(*self.cur.offset(i)) } )
+    }
+}
+
+impl ExactSizeIterator for Args {
+    fn len(&self) -> usize { self.range.len() }
+}
+
+impl Drop for Args {
+    fn drop(&mut self) {
+        // self.cur can be null if CommandLineToArgvW previously failed,
+        // but LocalFree ignores NULL pointers
+        unsafe { c::LocalFree(self.cur as *mut c_void); }
+    }
+}
+
+pub fn args() -> Args {
+    unsafe {
+        let mut nArgs: c_int = 0;
+        let lpCmdLine = c::GetCommandLineW();
+        let szArgList = c::CommandLineToArgvW(lpCmdLine, &mut nArgs);
+
+        // szArcList can be NULL if CommandLinToArgvW failed,
+        // but in that case nArgs is 0 so we won't actually
+        // try to read a null pointer
+        Args { cur: szArgList, range: 0..(nArgs as isize) }
+    }
+}
+
+pub fn temp_dir() -> PathBuf {
+    super::fill_utf16_buf(|buf, sz| unsafe {
+        c::GetTempPathW(sz, buf)
+    }, super::os2path).unwrap()
+}
+
+pub fn home_dir() -> Option<PathBuf> {
+    ::env::var_os("HOME").or_else(|| {
+        ::env::var_os("USERPROFILE")
+    }).map(PathBuf::from).or_else(|| unsafe {
+        let me = c::GetCurrentProcess();
+        let mut token = ptr::null_mut();
+        if c::OpenProcessToken(me, c::TOKEN_READ, &mut token) == 0 {
+            return None
+        }
+        let _handle = Handle::new(token);
+        super::fill_utf16_buf(|buf, mut sz| {
+            match c::GetUserProfileDirectoryW(token, buf, &mut sz) {
+                0 if c::GetLastError() != c::ERROR_INSUFFICIENT_BUFFER => 0,
+                0 => sz,
+                _ => sz - 1, // sz includes the null terminator
+            }
+        }, super::os2path).ok()
+    })
+}
+
+pub fn exit(code: i32) -> ! {
+    unsafe { c::ExitProcess(code as c::UINT) }
 }

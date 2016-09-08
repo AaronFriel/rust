@@ -8,12 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(default_type_params)]
 
-#[deriving(PartialEq)]
+#[derive(PartialEq, Debug)]
 struct Bar;
+#[derive(Debug)]
 struct Baz;
+#[derive(Debug)]
 struct Foo;
+#[derive(Debug)]
 struct Fu;
 
 impl PartialEq for Baz { fn eq(&self, _: &Baz) -> bool  { true } }
@@ -28,10 +30,10 @@ fn main() {
     assert!(Bar != Foo);
     assert!(Foo != Bar);
 
-    assert!(Bar == Bar);
+    assert_eq!(Bar, Bar);
 
-    assert!(Baz == Baz);
+    assert_eq!(Baz, Baz);
 
-    assert!(Foo == Fu);
-    assert!(Fu == Foo);
+    assert_eq!(Foo, Fu);
+    assert_eq!(Fu, Foo);
 }

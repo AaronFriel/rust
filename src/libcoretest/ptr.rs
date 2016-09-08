@@ -9,18 +9,17 @@
 // except according to those terms.
 
 use core::ptr::*;
-use core::mem;
 
 #[test]
 fn test() {
     unsafe {
         struct Pair {
-            fst: int,
-            snd: int
+            fst: isize,
+            snd: isize
         };
         let mut p = Pair {fst: 10, snd: 20};
         let pptr: *mut Pair = &mut p;
-        let iptr: *mut int = mem::transmute(pptr);
+        let iptr: *mut isize = pptr as *mut isize;
         assert_eq!(*iptr, 10);
         *iptr = 30;
         assert_eq!(*iptr, 30);
@@ -34,18 +33,15 @@ fn test() {
         let v0 = vec![32000u16, 32001u16, 32002u16];
         let mut v1 = vec![0u16, 0u16, 0u16];
 
-        copy_memory(v1.as_mut_ptr().offset(1),
-                    v0.as_ptr().offset(1), 1);
+        copy(v0.as_ptr().offset(1), v1.as_mut_ptr().offset(1), 1);
         assert!((v1[0] == 0u16 &&
                  v1[1] == 32001u16 &&
                  v1[2] == 0u16));
-        copy_memory(v1.as_mut_ptr(),
-                    v0.as_ptr().offset(2), 1);
+        copy(v0.as_ptr().offset(2), v1.as_mut_ptr(), 1);
         assert!((v1[0] == 32002u16 &&
                  v1[1] == 32001u16 &&
                  v1[2] == 0u16));
-        copy_memory(v1.as_mut_ptr().offset(2),
-                    v0.as_ptr(), 1u);
+        copy(v0.as_ptr(), v1.as_mut_ptr().offset(2), 1);
         assert!((v1[0] == 32002u16 &&
                  v1[1] == 32001u16 &&
                  v1[2] == 32000u16));
@@ -54,42 +50,38 @@ fn test() {
 
 #[test]
 fn test_is_null() {
-    let p: *const int = null();
+    let p: *const isize = null();
     assert!(p.is_null());
-    assert!(!p.is_not_null());
 
     let q = unsafe { p.offset(1) };
     assert!(!q.is_null());
-    assert!(q.is_not_null());
 
-    let mp: *mut int = null_mut();
+    let mp: *mut isize = null_mut();
     assert!(mp.is_null());
-    assert!(!mp.is_not_null());
 
     let mq = unsafe { mp.offset(1) };
     assert!(!mq.is_null());
-    assert!(mq.is_not_null());
 }
 
 #[test]
 fn test_as_ref() {
     unsafe {
-        let p: *const int = null();
+        let p: *const isize = null();
         assert_eq!(p.as_ref(), None);
 
-        let q: *const int = &2;
+        let q: *const isize = &2;
         assert_eq!(q.as_ref().unwrap(), &2);
 
-        let p: *mut int = null_mut();
+        let p: *mut isize = null_mut();
         assert_eq!(p.as_ref(), None);
 
-        let q: *mut int = &mut 2;
+        let q: *mut isize = &mut 2;
         assert_eq!(q.as_ref().unwrap(), &2);
 
         // Lifetime inference
-        let u = 2i;
+        let u = 2isize;
         {
-            let p: *const int = &u as *const _;
+            let p = &u as *const isize;
             assert_eq!(p.as_ref().unwrap(), &2);
         }
     }
@@ -98,16 +90,16 @@ fn test_as_ref() {
 #[test]
 fn test_as_mut() {
     unsafe {
-        let p: *mut int = null_mut();
+        let p: *mut isize = null_mut();
         assert!(p.as_mut() == None);
 
-        let q: *mut int = &mut 2;
+        let q: *mut isize = &mut 2;
         assert!(q.as_mut().unwrap() == &mut 2);
 
         // Lifetime inference
-        let mut u = 2i;
+        let mut u = 2isize;
         {
-            let p: *mut int = &mut u as *mut _;
+            let p = &mut u as *mut isize;
             assert!(p.as_mut().unwrap() == &mut 2);
         }
     }
@@ -116,7 +108,7 @@ fn test_as_mut() {
 #[test]
 fn test_ptr_addition() {
     unsafe {
-        let xs = Vec::from_elem(16, 5i);
+        let xs = vec![5; 16];
         let mut ptr = xs.as_ptr();
         let end = ptr.offset(16);
 
@@ -134,7 +126,7 @@ fn test_ptr_addition() {
             m_ptr = m_ptr.offset(1);
         }
 
-        assert!(xs_mut == Vec::from_elem(16, 10i));
+        assert!(xs_mut == vec![10; 16]);
     }
 }
 
@@ -142,12 +134,12 @@ fn test_ptr_addition() {
 fn test_ptr_subtraction() {
     unsafe {
         let xs = vec![0,1,2,3,4,5,6,7,8,9];
-        let mut idx = 9i8;
+        let mut idx = 9;
         let ptr = xs.as_ptr();
 
-        while idx >= 0i8 {
-            assert_eq!(*(ptr.offset(idx as int)), idx as int);
-            idx = idx - 1i8;
+        while idx >= 0 {
+            assert_eq!(*(ptr.offset(idx as isize)), idx as isize);
+            idx = idx - 1;
         }
 
         let mut xs_mut = xs;
@@ -159,14 +151,41 @@ fn test_ptr_subtraction() {
             m_ptr = m_ptr.offset(-1);
         }
 
-        assert!(xs_mut == vec![0,2,4,6,8,10,12,14,16,18]);
+        assert_eq!(xs_mut, [0,2,4,6,8,10,12,14,16,18]);
     }
 }
 
 #[test]
 fn test_set_memory() {
-    let mut xs = [0u8, ..20];
+    let mut xs = [0u8; 20];
     let ptr = xs.as_mut_ptr();
-    unsafe { set_memory(ptr, 5u8, xs.len()); }
-    assert!(xs == [5u8, ..20]);
+    unsafe { write_bytes(ptr, 5u8, xs.len()); }
+    assert!(xs == [5u8; 20]);
+}
+
+#[test]
+fn test_unsized_unique() {
+    let xs: &mut [i32] = &mut [1, 2, 3];
+    let ptr = unsafe { Unique::new(xs as *mut [i32]) };
+    let ys = unsafe { &mut **ptr };
+    let zs: &mut [i32] = &mut [1, 2, 3];
+    assert!(ys == zs);
+}
+
+#[test]
+#[allow(warnings)]
+// Have a symbol for the test below. It doesn’t need to be an actual variadic function, match the
+// ABI, or even point to an actual executable code, because the function itself is never invoked.
+#[no_mangle]
+pub fn test_variadic_fnptr() {
+    use core::hash::{Hash, SipHasher};
+    extern {
+        fn test_variadic_fnptr(_: u64, ...) -> f64;
+    }
+    let p: unsafe extern fn(u64, ...) -> f64 = test_variadic_fnptr;
+    let q = p.clone();
+    assert_eq!(p, q);
+    assert!(!(p < q));
+    let mut s = SipHasher::new();
+    assert_eq!(p.hash(&mut s), q.hash(&mut s));
 }

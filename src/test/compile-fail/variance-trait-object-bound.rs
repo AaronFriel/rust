@@ -14,12 +14,14 @@
 //
 // Issue #18262.
 
+#![feature(rustc_attrs)]
+
 use std::mem;
 
-trait T { fn foo(); }
+trait T { fn foo(&self); }
 
 #[rustc_variance]
-struct TOption<'a> { //~ ERROR regions=[[-];[];[];[]]
+struct TOption<'a> { //~ ERROR [-]
     v: Option<Box<T + 'a>>,
 }
 

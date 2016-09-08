@@ -11,21 +11,18 @@
 //! A wrapper around another RNG that reseeds it after it
 //! generates a certain number of random bytes.
 
-use core::prelude::*;
-
 use {Rng, SeedableRng};
-use core::default::Default;
 
 /// How many bytes of entropy the underling RNG is allowed to generate
 /// before it is reseeded.
-static DEFAULT_GENERATION_THRESHOLD: uint = 32 * 1024;
+const DEFAULT_GENERATION_THRESHOLD: usize = 32 * 1024;
 
 /// A wrapper around any RNG which reseeds the underlying RNG after it
 /// has generated a certain number of random bytes.
 pub struct ReseedingRng<R, Rsdr> {
     rng: R,
-    generation_threshold: uint,
-    bytes_generated: uint,
+    generation_threshold: usize,
+    bytes_generated: usize,
     /// Controls the behaviour when reseeding the RNG.
     pub reseeder: Rsdr,
 }
@@ -38,12 +35,12 @@ impl<R: Rng, Rsdr: Reseeder<R>> ReseedingRng<R, Rsdr> {
     /// * `rng`: the random number generator to use.
     /// * `generation_threshold`: the number of bytes of entropy at which to reseed the RNG.
     /// * `reseeder`: the reseeding object to use.
-    pub fn new(rng: R, generation_threshold: uint, reseeder: Rsdr) -> ReseedingRng<R,Rsdr> {
+    pub fn new(rng: R, generation_threshold: usize, reseeder: Rsdr) -> ReseedingRng<R, Rsdr> {
         ReseedingRng {
             rng: rng,
             generation_threshold: generation_threshold,
             bytes_generated: 0,
-            reseeder: reseeder
+            reseeder: reseeder,
         }
     }
 
@@ -86,46 +83,19 @@ impl<S, R: SeedableRng<S>, Rsdr: Reseeder<R> + Default>
         self.bytes_generated = 0;
     }
 
-    /// Create a new `ReseedingRng` from the given reseeder and
-    /// seed. This uses a default value for `generation_threshold`.
+/// Create a new `ReseedingRng` from the given reseeder and
+/// seed. This uses a default value for `generation_threshold`.
     fn from_seed((rsdr, seed): (Rsdr, S)) -> ReseedingRng<R, Rsdr> {
         ReseedingRng {
             rng: SeedableRng::from_seed(seed),
             generation_threshold: DEFAULT_GENERATION_THRESHOLD,
             bytes_generated: 0,
-            reseeder: rsdr
+            reseeder: rsdr,
         }
     }
 }
 
 /// Something that can be used to reseed an RNG via `ReseedingRng`.
-///
-/// # Example
-///
-/// ```rust
-/// use std::rand::{Rng, SeedableRng, StdRng};
-/// use std::rand::reseeding::{Reseeder, ReseedingRng};
-///
-/// struct TickTockReseeder { tick: bool }
-/// impl Reseeder<StdRng> for TickTockReseeder {
-///     fn reseed(&mut self, rng: &mut StdRng) {
-///         let val = if self.tick {0} else {1};
-///         rng.reseed(&[val]);
-///         self.tick = !self.tick;
-///     }
-/// }
-/// fn main() {
-///     let rsdr = TickTockReseeder { tick: true };
-///
-///     let inner = StdRng::new().unwrap();
-///     let mut rng = ReseedingRng::new(inner, 10, rsdr);
-///
-///     // this will repeat, because it gets reseeded very regularly.
-///     let s: String = rng.gen_ascii_chars().take(100).collect();
-///     println!("{}", s);
-/// }
-///
-/// ```
 pub trait Reseeder<R> {
     /// Reseed the given RNG.
     fn reseed(&mut self, rng: &mut R);
@@ -133,30 +103,30 @@ pub trait Reseeder<R> {
 
 /// Reseed an RNG using a `Default` instance. This reseeds by
 /// replacing the RNG with the result of a `Default::default` call.
+#[derive(Copy, Clone)]
 pub struct ReseedWithDefault;
-
-impl Copy for ReseedWithDefault {}
 
 impl<R: Rng + Default> Reseeder<R> for ReseedWithDefault {
     fn reseed(&mut self, rng: &mut R) {
         *rng = Default::default();
     }
 }
+#[stable(feature = "rust1", since = "1.0.0")]
 impl Default for ReseedWithDefault {
-    fn default() -> ReseedWithDefault { ReseedWithDefault }
+    fn default() -> ReseedWithDefault {
+        ReseedWithDefault
+    }
 }
 
 #[cfg(test)]
-mod test {
-    use std::prelude::*;
+mod tests {
+    use std::prelude::v1::*;
 
-    use core::iter::order;
-    use super::{ReseedingRng, ReseedWithDefault};
-    use std::default::Default;
-    use {SeedableRng, Rng};
+    use super::{ReseedWithDefault, ReseedingRng};
+    use {Rng, SeedableRng};
 
     struct Counter {
-        i: u32
+        i: u32,
     }
 
     impl Rng for Counter {
@@ -183,10 +153,10 @@ mod test {
 
     #[test]
     fn test_reseeding() {
-        let mut rs = ReseedingRng::new(Counter {i:0}, 400, ReseedWithDefault);
+        let mut rs = ReseedingRng::new(Counter { i: 0 }, 400, ReseedWithDefault);
 
         let mut i = 0;
-        for _ in range(0u, 1000) {
+        for _ in 0..1000 {
             assert_eq!(rs.next_u32(), i % 100);
             i += 1;
         }
@@ -196,8 +166,9 @@ mod test {
     fn test_rng_seeded() {
         let mut ra: MyRng = SeedableRng::from_seed((ReseedWithDefault, 2));
         let mut rb: MyRng = SeedableRng::from_seed((ReseedWithDefault, 2));
-        assert!(order::equals(ra.gen_ascii_chars().take(100),
-                              rb.gen_ascii_chars().take(100)));
+        assert!(ra.gen_ascii_chars()
+                  .take(100)
+                  .eq(rb.gen_ascii_chars().take(100)));
     }
 
     #[test]
@@ -211,11 +182,11 @@ mod test {
         assert_eq!(string1, string2);
     }
 
-    static FILL_BYTES_V_LEN: uint = 13579;
+    const FILL_BYTES_V_LEN: usize = 13579;
     #[test]
     fn test_rng_fill_bytes() {
-        let mut v = Vec::from_elem(FILL_BYTES_V_LEN, 0u8);
-        ::test::rng().fill_bytes(v.as_mut_slice());
+        let mut v = vec![0; FILL_BYTES_V_LEN];
+        ::test::rng().fill_bytes(&mut v);
 
         // Sanity test: if we've gotten here, `fill_bytes` has not infinitely
         // recursed.
@@ -224,7 +195,7 @@ mod test {
         // To test that `fill_bytes` actually did something, check that the
         // average of `v` is not 0.
         let mut sum = 0.0;
-        for &x in v.iter() {
+        for &x in &v {
             sum += x as f64;
         }
         assert!(sum / v.len() as f64 != 0.0);

@@ -10,6 +10,10 @@
 
 // Basic boolean tests
 
+
+use std::cmp::Ordering::{Equal, Greater, Less};
+use std::ops::{BitAnd, BitOr, BitXor};
+
 fn main() {
     assert_eq!(false.eq(&true), false);
     assert_eq!(false == false, true);
@@ -50,9 +54,9 @@ fn main() {
     assert_eq!(!false, true);
 
     let s = false.to_string();
-    assert_eq!(s.as_slice(), "false");
+    assert_eq!(s, "false");
     let s = true.to_string();
-    assert_eq!(s.as_slice(), "true");
+    assert_eq!(s, "true");
 
     assert!(true > false);
     assert!(!(false > true));
@@ -70,8 +74,8 @@ fn main() {
     assert!(true >= false);
     assert!(!(true <= false));
 
-    assert!(true.cmp(&true) == Equal);
-    assert!(false.cmp(&false) == Equal);
-    assert!(true.cmp(&false) == Greater);
-    assert!(false.cmp(&true) == Less);
+    assert_eq!(true.cmp(&true), Equal);
+    assert_eq!(false.cmp(&false), Equal);
+    assert_eq!(true.cmp(&false), Greater);
+    assert_eq!(false.cmp(&true), Less);
 }

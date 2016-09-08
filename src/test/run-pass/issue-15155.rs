@@ -22,11 +22,9 @@ struct IndirectBlah { x: Box<IndirectTraitWithSend> }
 impl TraitWithSend for IndirectBlah {}
 impl IndirectTraitWithSend for IndirectBlah {}
 
-fn test_trait<Sized? T: Send>() { println!("got here!") }
+fn test_trait<T: Send + ?Sized>() { println!("got here!") }
 
 fn main() {
     test_trait::<TraitWithSend>();
     test_trait::<IndirectTraitWithSend>();
 }
-
-

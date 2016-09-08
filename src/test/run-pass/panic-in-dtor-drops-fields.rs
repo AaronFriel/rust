@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+// ignore-emscripten no threads support
+
+use std::thread;
 
 static mut dropped: bool = false;
 
@@ -17,7 +19,7 @@ struct A {
 }
 
 struct B {
-    foo: int,
+    foo: isize,
 }
 
 impl Drop for A {
@@ -33,10 +35,9 @@ impl Drop for B {
 }
 
 pub fn main() {
-    let ret = task::try(move|| {
+    let ret = thread::spawn(move|| {
         let _a = A { b: B { foo: 3 } };
-    });
+    }).join();
     assert!(ret.is_err());
     unsafe { assert!(dropped); }
 }
-

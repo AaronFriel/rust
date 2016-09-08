@@ -7,25 +7,17 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-//
-// ignore-lexer-test FIXME #15883
 
-use borrow::BorrowFrom;
-use cmp::{Eq, Equiv, PartialEq};
-use core::kinds::Sized;
-use default::Default;
-use fmt::Show;
+use borrow::Borrow;
 use fmt;
-use hash::{Hash, Hasher, RandomSipHasher};
-use iter::{Iterator, IteratorExt, FromIterator, FilterMap, Chain, Repeat, Zip, Extend, repeat};
-use iter;
-use option::Option::{Some, None, mod};
-use result::Result::{Ok, Err};
+use hash::{Hash, BuildHasher};
+use iter::{Chain, FromIterator, FusedIterator};
+use ops::{BitOr, BitAnd, BitXor, Sub};
 
-use super::map::{HashMap, Entries, MoveEntries, INITIAL_CAPACITY};
+use super::Recover;
+use super::map::{self, HashMap, Keys, RandomState};
 
-// FIXME(conventions): implement BitOr, BitAnd, BitXor, and Sub
-
+const INITIAL_CAPACITY: usize = 32;
 
 // Future Optimization (FIXME!)
 // =============================
@@ -35,10 +27,27 @@ use super::map::{HashMap, Entries, MoveEntries, INITIAL_CAPACITY};
 // to get rid of it properly.
 
 /// An implementation of a hash set using the underlying representation of a
-/// HashMap where the value is (). As with the `HashMap` type, a `HashSet`
-/// requires that the elements implement the `Eq` and `Hash` traits.
+/// HashMap where the value is ().
 ///
-/// # Example
+/// As with the `HashMap` type, a `HashSet` requires that the elements
+/// implement the `Eq` and `Hash` traits. This can frequently be achieved by
+/// using `#[derive(PartialEq, Eq, Hash)]`. If you implement these yourself,
+/// it is important that the following property holds:
+///
+/// ```text
+/// k1 == k2 -> hash(k1) == hash(k2)
+/// ```
+///
+/// In other words, if two keys are equal, their hashes must be equal.
+///
+///
+/// It is a logic error for an item to be modified in such a way that the
+/// item's hash, as determined by the `Hash` trait, or its equality, as
+/// determined by the `Eq` trait, changes while it is in the set. This is
+/// normally only possible through `Cell`, `RefCell`, global state, I/O, or
+/// unsafe code.
+///
+/// # Examples
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -53,17 +62,17 @@ use super::map::{HashMap, Entries, MoveEntries, INITIAL_CAPACITY};
 /// books.insert("The Great Gatsby");
 ///
 /// // Check for a specific one.
-/// if !books.contains(&("The Winds of Winter")) {
+/// if !books.contains("The Winds of Winter") {
 ///     println!("We have {} books, but The Winds of Winter ain't one.",
 ///              books.len());
 /// }
 ///
 /// // Remove a book.
-/// books.remove(&"The Odyssey");
+/// books.remove("The Odyssey");
 ///
 /// // Iterate over everything.
-/// for book in books.iter() {
-///     println!("{}", *book);
+/// for book in &books {
+///     println!("{}", book);
 /// }
 /// ```
 ///
@@ -73,82 +82,91 @@ use super::map::{HashMap, Entries, MoveEntries, INITIAL_CAPACITY};
 ///
 /// ```
 /// use std::collections::HashSet;
-/// #[deriving(Hash, Eq, PartialEq, Show)]
+/// #[derive(Hash, Eq, PartialEq, Debug)]
 /// struct Viking<'a> {
 ///     name: &'a str,
-///     power: uint,
+///     power: usize,
 /// }
 ///
 /// let mut vikings = HashSet::new();
 ///
-/// vikings.insert(Viking { name: "Einar", power: 9u });
-/// vikings.insert(Viking { name: "Einar", power: 9u });
-/// vikings.insert(Viking { name: "Olaf", power: 4u });
-/// vikings.insert(Viking { name: "Harald", power: 8u });
+/// vikings.insert(Viking { name: "Einar", power: 9 });
+/// vikings.insert(Viking { name: "Einar", power: 9 });
+/// vikings.insert(Viking { name: "Olaf", power: 4 });
+/// vikings.insert(Viking { name: "Harald", power: 8 });
 ///
 /// // Use derived implementation to print the vikings.
-/// for x in vikings.iter() {
-///     println!("{}", x);
+/// for x in &vikings {
+///     println!("{:?}", x);
 /// }
 /// ```
-#[deriving(Clone)]
-pub struct HashSet<T, H = RandomSipHasher> {
-    map: HashMap<T, (), H>
+#[derive(Clone)]
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct HashSet<T, S = RandomState> {
+    map: HashMap<T, (), S>
 }
 
-impl<T: Hash + Eq> HashSet<T, RandomSipHasher> {
-    /// Create an empty HashSet.
+impl<T: Hash + Eq> HashSet<T, RandomState> {
+    /// Creates an empty HashSet.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let mut set: HashSet<int> = HashSet::new();
+    /// let mut set: HashSet<i32> = HashSet::new();
     /// ```
     #[inline]
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn new() -> HashSet<T, RandomSipHasher> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn new() -> HashSet<T, RandomState> {
         HashSet::with_capacity(INITIAL_CAPACITY)
     }
 
-    /// Create an empty HashSet with space for at least `n` elements in
+    /// Creates an empty HashSet with space for at least `n` elements in
     /// the hash table.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let mut set: HashSet<int> = HashSet::with_capacity(10);
+    /// let mut set: HashSet<i32> = HashSet::with_capacity(10);
     /// ```
     #[inline]
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn with_capacity(capacity: uint) -> HashSet<T, RandomSipHasher> {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn with_capacity(capacity: usize) -> HashSet<T, RandomState> {
         HashSet { map: HashMap::with_capacity(capacity) }
     }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
+impl<T, S> HashSet<T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
     /// Creates a new empty hash set which will use the given hasher to hash
     /// keys.
     ///
     /// The hash set is also created with the default initial capacity.
     ///
-    /// # Example
+    /// Warning: `hasher` is normally randomly generated, and
+    /// is designed to allow `HashSet`s to be resistant to attacks that
+    /// cause many collisions and very poor performance. Setting it
+    /// manually using this function can expose a DoS attack vector.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// use std::hash::sip::SipHasher;
+    /// use std::collections::hash_map::RandomState;
     ///
-    /// let h = SipHasher::new();
-    /// let mut set = HashSet::with_hasher(h);
-    /// set.insert(2u);
+    /// let s = RandomState::new();
+    /// let mut set = HashSet::with_hasher(s);
+    /// set.insert(2);
     /// ```
     #[inline]
-    pub fn with_hasher(hasher: H) -> HashSet<T, H> {
+    #[stable(feature = "hashmap_build_hasher", since = "1.7.0")]
+    pub fn with_hasher(hasher: S) -> HashSet<T, S> {
         HashSet::with_capacity_and_hasher(INITIAL_CAPACITY, hasher)
     }
 
-    /// Create an empty HashSet with space for at least `capacity`
+    /// Creates an empty HashSet with space for at least `capacity`
     /// elements in the hash table, using `hasher` to hash the keys.
     ///
     /// Warning: `hasher` is normally randomly generated, and
@@ -156,33 +174,43 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// cause many collisions and very poor performance. Setting it
     /// manually using this function can expose a DoS attack vector.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// use std::hash::sip::SipHasher;
+    /// use std::collections::hash_map::RandomState;
     ///
-    /// let h = SipHasher::new();
-    /// let mut set = HashSet::with_capacity_and_hasher(10u, h);
-    /// set.insert(1i);
+    /// let s = RandomState::new();
+    /// let mut set = HashSet::with_capacity_and_hasher(10, s);
+    /// set.insert(1);
     /// ```
     #[inline]
-    pub fn with_capacity_and_hasher(capacity: uint, hasher: H) -> HashSet<T, H> {
-        HashSet { map: HashMap::with_capacity_and_hasher(capacity, hasher) }
+    #[stable(feature = "hashmap_build_hasher", since = "1.7.0")]
+    pub fn with_capacity_and_hasher(capacity: usize, hasher: S)
+                                    -> HashSet<T, S> {
+        HashSet {
+            map: HashMap::with_capacity_and_hasher(capacity, hasher),
+        }
+    }
+
+    /// Returns a reference to the set's hasher.
+    #[stable(feature = "hashmap_public_hasher", since = "1.9.0")]
+    pub fn hasher(&self) -> &S {
+        self.map.hasher()
     }
 
     /// Returns the number of elements the set can hold without reallocating.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let set: HashSet<int> = HashSet::with_capacity(100);
+    /// let set: HashSet<i32> = HashSet::with_capacity(100);
     /// assert!(set.capacity() >= 100);
     /// ```
     #[inline]
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn capacity(&self) -> uint {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn capacity(&self) -> usize {
         self.map.capacity()
     }
 
@@ -192,17 +220,17 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     ///
     /// # Panics
     ///
-    /// Panics if the new allocation size overflows `uint`.
+    /// Panics if the new allocation size overflows `usize`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let mut set: HashSet<int> = HashSet::new();
+    /// let mut set: HashSet<i32> = HashSet::new();
     /// set.reserve(10);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn reserve(&mut self, additional: uint) {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn reserve(&mut self, additional: usize) {
         self.map.reserve(additional)
     }
 
@@ -210,34 +238,27 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// down as much as possible while maintaining the internal rules
     /// and possibly leaving some space in accordance with the resize policy.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
-    /// let mut set: HashSet<int> = HashSet::with_capacity(100);
+    /// let mut set = HashSet::with_capacity(100);
     /// set.insert(1);
     /// set.insert(2);
     /// assert!(set.capacity() >= 100);
     /// set.shrink_to_fit();
     /// assert!(set.capacity() >= 2);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn shrink_to_fit(&mut self) {
         self.map.shrink_to_fit()
-    }
-
-    /// Deprecated: use `contains` and `BorrowFrom`.
-    #[deprecated = "use contains and BorrowFrom"]
-    #[allow(deprecated)]
-    pub fn contains_equiv<Sized? Q: Hash<S> + Equiv<T>>(&self, value: &Q) -> bool {
-      self.map.contains_key_equiv(value)
     }
 
     /// An iterator visiting all elements in arbitrary order.
     /// Iterator element type is &'a T.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -250,191 +271,164 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     ///     println!("{}", x);
     /// }
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn iter<'a>(&'a self) -> SetItems<'a, T> {
-        self.map.keys()
-    }
-
-    /// Creates a consuming iterator, that is, one that moves each value out
-    /// of the set in arbitrary order. The set cannot be used after calling
-    /// this.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use std::collections::HashSet;
-    /// let mut set = HashSet::new();
-    /// set.insert("a".to_string());
-    /// set.insert("b".to_string());
-    ///
-    /// // Not possible to collect to a Vec<String> with a regular `.iter()`.
-    /// let v: Vec<String> = set.into_iter().collect();
-    ///
-    /// // Will print in an arbitrary order.
-    /// for x in v.iter() {
-    ///     println!("{}", x);
-    /// }
-    /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn into_iter(self) -> SetMoveItems<T> {
-        fn first<A, B>((a, _): (A, B)) -> A { a }
-
-        self.map.into_iter().map(first)
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn iter(&self) -> Iter<T> {
+        Iter { iter: self.map.keys() }
     }
 
     /// Visit the values representing the difference.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let a: HashSet<int> = [1i, 2, 3].iter().map(|&x| x).collect();
-    /// let b: HashSet<int> = [4i, 2, 3, 4].iter().map(|&x| x).collect();
+    /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
     ///
     /// // Can be seen as `a - b`.
     /// for x in a.difference(&b) {
     ///     println!("{}", x); // Print 1
     /// }
     ///
-    /// let diff: HashSet<int> = a.difference(&b).map(|&x| x).collect();
-    /// assert_eq!(diff, [1i].iter().map(|&x| x).collect());
+    /// let diff: HashSet<_> = a.difference(&b).cloned().collect();
+    /// assert_eq!(diff, [1].iter().cloned().collect());
     ///
     /// // Note that difference is not symmetric,
     /// // and `b - a` means something else:
-    /// let diff: HashSet<int> = b.difference(&a).map(|&x| x).collect();
-    /// assert_eq!(diff, [4i].iter().map(|&x| x).collect());
+    /// let diff: HashSet<_> = b.difference(&a).cloned().collect();
+    /// assert_eq!(diff, [4].iter().cloned().collect());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn difference<'a>(&'a self, other: &'a HashSet<T, H>) -> SetAlgebraItems<'a, T, H> {
-        fn filter<'a, T, S, H>((other, elt): (&HashSet<T, H>, &'a T)) -> Option<&'a T> where
-            T: Eq + Hash<S>, H: Hasher<S>
-        {
-            if !other.contains(elt) { Some(elt) } else { None }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn difference<'a>(&'a self, other: &'a HashSet<T, S>) -> Difference<'a, T, S> {
+        Difference {
+            iter: self.iter(),
+            other: other,
         }
-
-        repeat(other).zip(self.iter()).filter_map(filter)
     }
 
     /// Visit the values representing the symmetric difference.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let a: HashSet<int> = [1i, 2, 3].iter().map(|&x| x).collect();
-    /// let b: HashSet<int> = [4i, 2, 3, 4].iter().map(|&x| x).collect();
+    /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
     ///
     /// // Print 1, 4 in arbitrary order.
     /// for x in a.symmetric_difference(&b) {
     ///     println!("{}", x);
     /// }
     ///
-    /// let diff1: HashSet<int> = a.symmetric_difference(&b).map(|&x| x).collect();
-    /// let diff2: HashSet<int> = b.symmetric_difference(&a).map(|&x| x).collect();
+    /// let diff1: HashSet<_> = a.symmetric_difference(&b).cloned().collect();
+    /// let diff2: HashSet<_> = b.symmetric_difference(&a).cloned().collect();
     ///
     /// assert_eq!(diff1, diff2);
-    /// assert_eq!(diff1, [1i, 4].iter().map(|&x| x).collect());
+    /// assert_eq!(diff1, [1, 4].iter().cloned().collect());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn symmetric_difference<'a>(&'a self, other: &'a HashSet<T, H>)
-        -> Chain<SetAlgebraItems<'a, T, H>, SetAlgebraItems<'a, T, H>> {
-        self.difference(other).chain(other.difference(self))
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn symmetric_difference<'a>(&'a self, other: &'a HashSet<T, S>)
+        -> SymmetricDifference<'a, T, S> {
+        SymmetricDifference { iter: self.difference(other).chain(other.difference(self)) }
     }
 
     /// Visit the values representing the intersection.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let a: HashSet<int> = [1i, 2, 3].iter().map(|&x| x).collect();
-    /// let b: HashSet<int> = [4i, 2, 3, 4].iter().map(|&x| x).collect();
+    /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
     ///
     /// // Print 2, 3 in arbitrary order.
     /// for x in a.intersection(&b) {
     ///     println!("{}", x);
     /// }
     ///
-    /// let diff: HashSet<int> = a.intersection(&b).map(|&x| x).collect();
-    /// assert_eq!(diff, [2i, 3].iter().map(|&x| x).collect());
+    /// let intersection: HashSet<_> = a.intersection(&b).cloned().collect();
+    /// assert_eq!(intersection, [2, 3].iter().cloned().collect());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn intersection<'a>(&'a self, other: &'a HashSet<T, H>) -> SetAlgebraItems<'a, T, H> {
-        fn filter<'a, T, S, H>((other, elt): (&HashSet<T, H>, &'a T)) -> Option<&'a T> where
-            T: Eq + Hash<S>, H: Hasher<S>
-        {
-            if other.contains(elt) { Some(elt) } else { None }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn intersection<'a>(&'a self, other: &'a HashSet<T, S>) -> Intersection<'a, T, S> {
+        Intersection {
+            iter: self.iter(),
+            other: other,
         }
-
-        repeat(other).zip(self.iter()).filter_map(filter)
     }
 
     /// Visit the values representing the union.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
-    /// let a: HashSet<int> = [1i, 2, 3].iter().map(|&x| x).collect();
-    /// let b: HashSet<int> = [4i, 2, 3, 4].iter().map(|&x| x).collect();
+    /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let b: HashSet<_> = [4, 2, 3, 4].iter().cloned().collect();
     ///
     /// // Print 1, 2, 3, 4 in arbitrary order.
     /// for x in a.union(&b) {
     ///     println!("{}", x);
     /// }
     ///
-    /// let diff: HashSet<int> = a.union(&b).map(|&x| x).collect();
-    /// assert_eq!(diff, [1i, 2, 3, 4].iter().map(|&x| x).collect());
+    /// let union: HashSet<_> = a.union(&b).cloned().collect();
+    /// assert_eq!(union, [1, 2, 3, 4].iter().cloned().collect());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn union<'a>(&'a self, other: &'a HashSet<T, H>)
-        -> Chain<SetItems<'a, T>, SetAlgebraItems<'a, T, H>> {
-        self.iter().chain(other.difference(self))
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn union<'a>(&'a self, other: &'a HashSet<T, S>) -> Union<'a, T, S> {
+        Union { iter: self.iter().chain(other.difference(self)) }
     }
 
-    /// Return the number of elements in the set
+    /// Returns the number of elements in the set.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
     /// let mut v = HashSet::new();
     /// assert_eq!(v.len(), 0);
-    /// v.insert(1u);
+    /// v.insert(1);
     /// assert_eq!(v.len(), 1);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn len(&self) -> uint { self.map.len() }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn len(&self) -> usize { self.map.len() }
 
-    /// Returns true if the set contains no elements
+    /// Returns true if the set contains no elements.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
     /// let mut v = HashSet::new();
     /// assert!(v.is_empty());
-    /// v.insert(1u);
+    /// v.insert(1);
     /// assert!(!v.is_empty());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn is_empty(&self) -> bool { self.map.len() == 0 }
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+
+    /// Clears the set, returning all elements in an iterator.
+    #[inline]
+    #[stable(feature = "drain", since = "1.6.0")]
+    pub fn drain(&mut self) -> Drain<T> {
+        Drain { iter: self.map.drain() }
+    }
 
     /// Clears the set, removing all values.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
     /// let mut v = HashSet::new();
-    /// v.insert(1u);
+    /// v.insert(1);
     /// v.clear();
     /// assert!(v.is_empty());
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn clear(&mut self) { self.map.clear() }
 
     /// Returns `true` if the set contains a value.
@@ -443,32 +437,44 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// `Hash` and `Eq` on the borrowed form *must* match those for
     /// the value type.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
-    /// let set: HashSet<uint> = [1, 2, 3].iter().map(|&x| x).collect();
+    /// let set: HashSet<_> = [1, 2, 3].iter().cloned().collect();
     /// assert_eq!(set.contains(&1), true);
     /// assert_eq!(set.contains(&4), false);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn contains<Sized? Q>(&self, value: &Q) -> bool
-        where Q: BorrowFrom<T> + Hash<S> + Eq
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+        where T: Borrow<Q>, Q: Hash + Eq
     {
         self.map.contains_key(value)
+    }
+
+    /// Returns a reference to the value in the set, if any, that is equal to the given value.
+    ///
+    /// The value may be any borrowed form of the set's value type, but
+    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// the value type.
+    #[stable(feature = "set_recovery", since = "1.9.0")]
+    pub fn get<Q: ?Sized>(&self, value: &Q) -> Option<&T>
+        where T: Borrow<Q>, Q: Hash + Eq
+    {
+        Recover::get(&self.map, value)
     }
 
     /// Returns `true` if the set has no elements in common with `other`.
     /// This is equivalent to checking for an empty intersection.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
-    /// let a: HashSet<uint> = [1, 2, 3].iter().map(|&x| x).collect();
-    /// let mut b: HashSet<uint> = HashSet::new();
+    /// let a: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let mut b = HashSet::new();
     ///
     /// assert_eq!(a.is_disjoint(&b), true);
     /// b.insert(4);
@@ -476,20 +482,20 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// b.insert(1);
     /// assert_eq!(a.is_disjoint(&b), false);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn is_disjoint(&self, other: &HashSet<T, H>) -> bool {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn is_disjoint(&self, other: &HashSet<T, S>) -> bool {
         self.iter().all(|v| !other.contains(v))
     }
 
     /// Returns `true` if the set is a subset of another.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
-    /// let sup: HashSet<uint> = [1, 2, 3].iter().map(|&x| x).collect();
-    /// let mut set: HashSet<uint> = HashSet::new();
+    /// let sup: HashSet<_> = [1, 2, 3].iter().cloned().collect();
+    /// let mut set = HashSet::new();
     ///
     /// assert_eq!(set.is_subset(&sup), true);
     /// set.insert(2);
@@ -497,20 +503,20 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// set.insert(4);
     /// assert_eq!(set.is_subset(&sup), false);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn is_subset(&self, other: &HashSet<T, H>) -> bool {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn is_subset(&self, other: &HashSet<T, S>) -> bool {
         self.iter().all(|v| other.contains(v))
     }
 
     /// Returns `true` if the set is a superset of another.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
-    /// let sub: HashSet<uint> = [1, 2].iter().map(|&x| x).collect();
-    /// let mut set: HashSet<uint> = HashSet::new();
+    /// let sub: HashSet<_> = [1, 2].iter().cloned().collect();
+    /// let mut set = HashSet::new();
     ///
     /// assert_eq!(set.is_superset(&sub), false);
     ///
@@ -522,27 +528,37 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// assert_eq!(set.is_superset(&sub), true);
     /// ```
     #[inline]
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn is_superset(&self, other: &HashSet<T, H>) -> bool {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn is_superset(&self, other: &HashSet<T, S>) -> bool {
         other.is_subset(self)
     }
 
-    /// Adds a value to the set. Returns `true` if the value was not already
-    /// present in the set.
+    /// Adds a value to the set.
     ///
-    /// # Example
+    /// If the set did not have this value present, `true` is returned.
+    ///
+    /// If the set did have this value present, `false` is returned.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
     /// let mut set = HashSet::new();
     ///
-    /// assert_eq!(set.insert(2u), true);
+    /// assert_eq!(set.insert(2), true);
     /// assert_eq!(set.insert(2), false);
     /// assert_eq!(set.len(), 1);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
+    #[stable(feature = "rust1", since = "1.0.0")]
     pub fn insert(&mut self, value: T) -> bool { self.map.insert(value, ()).is_none() }
+
+    /// Adds a value to the set, replacing the existing value, if any, that is equal to the given
+    /// one. Returns the replaced value.
+    #[stable(feature = "set_recovery", since = "1.9.0")]
+    pub fn replace(&mut self, value: T) -> Option<T> {
+        Recover::replace(&mut self.map, value)
+    }
 
     /// Removes a value from the set. Returns `true` if the value was
     /// present in the set.
@@ -551,94 +567,507 @@ impl<T: Eq + Hash<S>, S, H: Hasher<S>> HashSet<T, H> {
     /// `Hash` and `Eq` on the borrowed form *must* match those for
     /// the value type.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use std::collections::HashSet;
     ///
     /// let mut set = HashSet::new();
     ///
-    /// set.insert(2u);
+    /// set.insert(2);
     /// assert_eq!(set.remove(&2), true);
     /// assert_eq!(set.remove(&2), false);
     /// ```
-    #[unstable = "matches collection reform specification, waiting for dust to settle"]
-    pub fn remove<Sized? Q>(&mut self, value: &Q) -> bool
-        where Q: BorrowFrom<T> + Hash<S> + Eq
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn remove<Q: ?Sized>(&mut self, value: &Q) -> bool
+        where T: Borrow<Q>, Q: Hash + Eq
     {
         self.map.remove(value).is_some()
     }
+
+    /// Removes and returns the value in the set, if any, that is equal to the given one.
+    ///
+    /// The value may be any borrowed form of the set's value type, but
+    /// `Hash` and `Eq` on the borrowed form *must* match those for
+    /// the value type.
+    #[stable(feature = "set_recovery", since = "1.9.0")]
+    pub fn take<Q: ?Sized>(&mut self, value: &Q) -> Option<T>
+        where T: Borrow<Q>, Q: Hash + Eq
+    {
+        Recover::take(&mut self.map, value)
+    }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S>> PartialEq for HashSet<T, H> {
-    fn eq(&self, other: &HashSet<T, H>) -> bool {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> PartialEq for HashSet<T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    fn eq(&self, other: &HashSet<T, S>) -> bool {
         if self.len() != other.len() { return false; }
 
         self.iter().all(|key| other.contains(key))
     }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S>> Eq for HashSet<T, H> {}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> Eq for HashSet<T, S>
+    where T: Eq + Hash, S: BuildHasher
+{}
 
-impl<T: Eq + Hash<S> + fmt::Show, S, H: Hasher<S>> fmt::Show for HashSet<T, H> {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> fmt::Debug for HashSet<T, S>
+    where T: Eq + Hash + fmt::Debug,
+          S: BuildHasher
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "{{"));
-
-        for (i, x) in self.iter().enumerate() {
-            if i != 0 { try!(write!(f, ", ")); }
-            try!(write!(f, "{}", *x));
-        }
-
-        write!(f, "}}")
+        f.debug_set().entries(self.iter()).finish()
     }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S> + Default> FromIterator<T> for HashSet<T, H> {
-    fn from_iter<I: Iterator<T>>(iter: I) -> HashSet<T, H> {
-        let (lower, _) = iter.size_hint();
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> FromIterator<T> for HashSet<T, S>
+    where T: Eq + Hash,
+          S: BuildHasher + Default,
+{
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> HashSet<T, S> {
+        let iterator = iter.into_iter();
+        let lower = iterator.size_hint().0;
         let mut set = HashSet::with_capacity_and_hasher(lower, Default::default());
-        set.extend(iter);
+        set.extend(iterator);
         set
     }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S> + Default> Extend<T> for HashSet<T, H> {
-    fn extend<I: Iterator<T>>(&mut self, mut iter: I) {
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> Extend<T> for HashSet<T, S>
+    where T: Eq + Hash,
+          S: BuildHasher,
+{
+    fn extend<I: IntoIterator<Item=T>>(&mut self, iter: I) {
         for k in iter {
             self.insert(k);
         }
     }
 }
 
-impl<T: Eq + Hash<S>, S, H: Hasher<S> + Default> Default for HashSet<T, H> {
-    fn default() -> HashSet<T, H> {
+#[stable(feature = "hash_extend_copy", since = "1.4.0")]
+impl<'a, T, S> Extend<&'a T> for HashSet<T, S>
+    where T: 'a + Eq + Hash + Copy,
+          S: BuildHasher,
+{
+    fn extend<I: IntoIterator<Item=&'a T>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().cloned());
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> Default for HashSet<T, S>
+    where T: Eq + Hash,
+          S: BuildHasher + Default,
+{
+    fn default() -> HashSet<T, S> {
         HashSet::with_hasher(Default::default())
     }
 }
 
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, 'b, T, S> BitOr<&'b HashSet<T, S>> for &'a HashSet<T, S>
+    where T: Eq + Hash + Clone,
+          S: BuildHasher + Default,
+{
+    type Output = HashSet<T, S>;
+
+    /// Returns the union of `self` and `rhs` as a new `HashSet<T, S>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// let a: HashSet<_> = vec![1, 2, 3].into_iter().collect();
+    /// let b: HashSet<_> = vec![3, 4, 5].into_iter().collect();
+    ///
+    /// let set = &a | &b;
+    ///
+    /// let mut i = 0;
+    /// let expected = [1, 2, 3, 4, 5];
+    /// for x in &set {
+    ///     assert!(expected.contains(x));
+    ///     i += 1;
+    /// }
+    /// assert_eq!(i, expected.len());
+    /// ```
+    fn bitor(self, rhs: &HashSet<T, S>) -> HashSet<T, S> {
+        self.union(rhs).cloned().collect()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, 'b, T, S> BitAnd<&'b HashSet<T, S>> for &'a HashSet<T, S>
+    where T: Eq + Hash + Clone,
+          S: BuildHasher + Default,
+{
+    type Output = HashSet<T, S>;
+
+    /// Returns the intersection of `self` and `rhs` as a new `HashSet<T, S>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// let a: HashSet<_> = vec![1, 2, 3].into_iter().collect();
+    /// let b: HashSet<_> = vec![2, 3, 4].into_iter().collect();
+    ///
+    /// let set = &a & &b;
+    ///
+    /// let mut i = 0;
+    /// let expected = [2, 3];
+    /// for x in &set {
+    ///     assert!(expected.contains(x));
+    ///     i += 1;
+    /// }
+    /// assert_eq!(i, expected.len());
+    /// ```
+    fn bitand(self, rhs: &HashSet<T, S>) -> HashSet<T, S> {
+        self.intersection(rhs).cloned().collect()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, 'b, T, S> BitXor<&'b HashSet<T, S>> for &'a HashSet<T, S>
+    where T: Eq + Hash + Clone,
+          S: BuildHasher + Default,
+{
+    type Output = HashSet<T, S>;
+
+    /// Returns the symmetric difference of `self` and `rhs` as a new `HashSet<T, S>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// let a: HashSet<_> = vec![1, 2, 3].into_iter().collect();
+    /// let b: HashSet<_> = vec![3, 4, 5].into_iter().collect();
+    ///
+    /// let set = &a ^ &b;
+    ///
+    /// let mut i = 0;
+    /// let expected = [1, 2, 4, 5];
+    /// for x in &set {
+    ///     assert!(expected.contains(x));
+    ///     i += 1;
+    /// }
+    /// assert_eq!(i, expected.len());
+    /// ```
+    fn bitxor(self, rhs: &HashSet<T, S>) -> HashSet<T, S> {
+        self.symmetric_difference(rhs).cloned().collect()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, 'b, T, S> Sub<&'b HashSet<T, S>> for &'a HashSet<T, S>
+    where T: Eq + Hash + Clone,
+          S: BuildHasher + Default,
+{
+    type Output = HashSet<T, S>;
+
+    /// Returns the difference of `self` and `rhs` as a new `HashSet<T, S>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// let a: HashSet<_> = vec![1, 2, 3].into_iter().collect();
+    /// let b: HashSet<_> = vec![3, 4, 5].into_iter().collect();
+    ///
+    /// let set = &a - &b;
+    ///
+    /// let mut i = 0;
+    /// let expected = [1, 2];
+    /// for x in &set {
+    ///     assert!(expected.contains(x));
+    ///     i += 1;
+    /// }
+    /// assert_eq!(i, expected.len());
+    /// ```
+    fn sub(self, rhs: &HashSet<T, S>) -> HashSet<T, S> {
+        self.difference(rhs).cloned().collect()
+    }
+}
+
 /// HashSet iterator
-pub type SetItems<'a, K> =
-    iter::Map<(&'a K, &'a ()), &'a K, Entries<'a, K, ()>, fn((&'a K, &'a ())) -> &'a K>;
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct Iter<'a, K: 'a> {
+    iter: Keys<'a, K, ()>
+}
 
 /// HashSet move iterator
-pub type SetMoveItems<K> = iter::Map<(K, ()), K, MoveEntries<K, ()>, fn((K, ())) -> K>;
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct IntoIter<K> {
+    iter: map::IntoIter<K, ()>
+}
 
-// `Repeat` is used to feed the filter closure an explicit capture
-// of a reference to the other set
-/// Set operations iterator
-pub type SetAlgebraItems<'a, T, H> = FilterMap<
-    (&'a HashSet<T, H>, &'a T),
-    &'a T,
-    Zip<Repeat<&'a HashSet<T, H>>, SetItems<'a, T>>,
-    for<'b> fn((&HashSet<T, H>, &'b T)) -> Option<&'b T>,
->;
+/// HashSet drain iterator
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct Drain<'a, K: 'a> {
+    iter: map::Drain<'a, K, ()>,
+}
+
+/// Intersection iterator
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct Intersection<'a, T: 'a, S: 'a> {
+    // iterator of the first set
+    iter: Iter<'a, T>,
+    // the second set
+    other: &'a HashSet<T, S>,
+}
+
+/// Difference iterator
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct Difference<'a, T: 'a, S: 'a> {
+    // iterator of the first set
+    iter: Iter<'a, T>,
+    // the second set
+    other: &'a HashSet<T, S>,
+}
+
+/// Symmetric difference iterator.
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct SymmetricDifference<'a, T: 'a, S: 'a> {
+    iter: Chain<Difference<'a, T, S>, Difference<'a, T, S>>
+}
+
+/// Set union iterator.
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct Union<'a, T: 'a, S: 'a> {
+    iter: Chain<Iter<'a, T>, Difference<'a, T, S>>
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> IntoIterator for &'a HashSet<T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> {
+        self.iter()
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<T, S> IntoIterator for HashSet<T, S>
+    where T: Eq + Hash,
+          S: BuildHasher
+{
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    /// Creates a consuming iterator, that is, one that moves each value out
+    /// of the set in arbitrary order. The set cannot be used after calling
+    /// this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    /// let mut set = HashSet::new();
+    /// set.insert("a".to_string());
+    /// set.insert("b".to_string());
+    ///
+    /// // Not possible to collect to a Vec<String> with a regular `.iter()`.
+    /// let v: Vec<String> = set.into_iter().collect();
+    ///
+    /// // Will print in an arbitrary order.
+    /// for x in &v {
+    ///     println!("{}", x);
+    /// }
+    /// ```
+    fn into_iter(self) -> IntoIter<T> {
+        IntoIter { iter: self.map.into_iter() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K> Clone for Iter<'a, K> {
+    fn clone(&self) -> Iter<'a, K> { Iter { iter: self.iter.clone() } }
+}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K> Iterator for Iter<'a, K> {
+    type Item = &'a K;
+
+    fn next(&mut self) -> Option<&'a K> { self.iter.next() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K> ExactSizeIterator for Iter<'a, K> {
+    fn len(&self) -> usize { self.iter.len() }
+}
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K> FusedIterator for Iter<'a, K> {}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<K> Iterator for IntoIter<K> {
+    type Item = K;
+
+    fn next(&mut self) -> Option<K> { self.iter.next().map(|(k, _)| k) }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<K> ExactSizeIterator for IntoIter<K> {
+    fn len(&self) -> usize { self.iter.len() }
+}
+#[unstable(feature = "fused", issue = "35602")]
+impl<K> FusedIterator for IntoIter<K> {}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K> Iterator for Drain<'a, K> {
+    type Item = K;
+
+    fn next(&mut self) -> Option<K> { self.iter.next().map(|(k, _)| k) }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K> ExactSizeIterator for Drain<'a, K> {
+    fn len(&self) -> usize { self.iter.len() }
+}
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, K> FusedIterator for Drain<'a, K> {}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Clone for Intersection<'a, T, S> {
+    fn clone(&self) -> Intersection<'a, T, S> {
+        Intersection { iter: self.iter.clone(), ..*self }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Iterator for Intersection<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            match self.iter.next() {
+                None => return None,
+                Some(elt) => if self.other.contains(elt) {
+                    return Some(elt)
+                },
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (_, upper) = self.iter.size_hint();
+        (0, upper)
+    }
+}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T, S> FusedIterator for Intersection<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Clone for Difference<'a, T, S> {
+    fn clone(&self) -> Difference<'a, T, S> {
+        Difference { iter: self.iter.clone(), ..*self }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Iterator for Difference<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            match self.iter.next() {
+                None => return None,
+                Some(elt) => if !self.other.contains(elt) {
+                    return Some(elt)
+                },
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (_, upper) = self.iter.size_hint();
+        (0, upper)
+    }
+}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T, S> FusedIterator for Difference<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Clone for SymmetricDifference<'a, T, S> {
+    fn clone(&self) -> SymmetricDifference<'a, T, S> {
+        SymmetricDifference { iter: self.iter.clone() }
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> { self.iter.next() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T, S> FusedIterator for SymmetricDifference<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Clone for Union<'a, T, S> {
+    fn clone(&self) -> Union<'a, T, S> { Union { iter: self.iter.clone() } }
+}
+
+#[unstable(feature = "fused", issue = "35602")]
+impl<'a, T, S> FusedIterator for Union<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, T, S> Iterator for Union<'a, T, S>
+    where T: Eq + Hash, S: BuildHasher
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> { self.iter.next() }
+    fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
+}
+
+#[allow(dead_code)]
+fn assert_covariance() {
+    fn set<'new>(v: HashSet<&'static str>) -> HashSet<&'new str> { v }
+    fn iter<'a, 'new>(v: Iter<'a, &'static str>) -> Iter<'a, &'new str> { v }
+    fn into_iter<'new>(v: IntoIter<&'static str>) -> IntoIter<&'new str> { v }
+    fn difference<'a, 'new>(v: Difference<'a, &'static str, RandomState>)
+        -> Difference<'a, &'new str, RandomState> { v }
+    fn symmetric_difference<'a, 'new>(v: SymmetricDifference<'a, &'static str, RandomState>)
+        -> SymmetricDifference<'a, &'new str, RandomState> { v }
+    fn intersection<'a, 'new>(v: Intersection<'a, &'static str, RandomState>)
+        -> Intersection<'a, &'new str, RandomState> { v }
+    fn union<'a, 'new>(v: Union<'a, &'static str, RandomState>)
+        -> Union<'a, &'new str, RandomState> { v }
+    fn drain<'new>(d: Drain<'static, &'static str>) -> Drain<'new, &'new str> { d }
+}
 
 #[cfg(test)]
 mod test_set {
-    use prelude::*;
-
     use super::HashSet;
-    use slice::PartialEqSliceExt;
 
     #[test]
     fn test_disjoint() {
@@ -646,8 +1075,8 @@ mod test_set {
         let mut ys = HashSet::new();
         assert!(xs.is_disjoint(&ys));
         assert!(ys.is_disjoint(&xs));
-        assert!(xs.insert(5i));
-        assert!(ys.insert(11i));
+        assert!(xs.insert(5));
+        assert!(ys.insert(11));
         assert!(xs.is_disjoint(&ys));
         assert!(ys.is_disjoint(&xs));
         assert!(xs.insert(7));
@@ -665,13 +1094,13 @@ mod test_set {
     #[test]
     fn test_subset_and_superset() {
         let mut a = HashSet::new();
-        assert!(a.insert(0i));
+        assert!(a.insert(0));
         assert!(a.insert(5));
         assert!(a.insert(11));
         assert!(a.insert(7));
 
         let mut b = HashSet::new();
-        assert!(b.insert(0i));
+        assert!(b.insert(0));
         assert!(b.insert(7));
         assert!(b.insert(19));
         assert!(b.insert(250));
@@ -694,11 +1123,11 @@ mod test_set {
     #[test]
     fn test_iterate() {
         let mut a = HashSet::new();
-        for i in range(0u, 32) {
+        for i in 0..32 {
             assert!(a.insert(i));
         }
         let mut observed: u32 = 0;
-        for k in a.iter() {
+        for k in &a {
             observed |= 1 << *k;
         }
         assert_eq!(observed, 0xFFFF_FFFF);
@@ -709,7 +1138,7 @@ mod test_set {
         let mut a = HashSet::new();
         let mut b = HashSet::new();
 
-        assert!(a.insert(11i));
+        assert!(a.insert(11));
         assert!(a.insert(1));
         assert!(a.insert(3));
         assert!(a.insert(77));
@@ -717,7 +1146,7 @@ mod test_set {
         assert!(a.insert(5));
         assert!(a.insert(-5));
 
-        assert!(b.insert(2i));
+        assert!(b.insert(2));
         assert!(b.insert(11));
         assert!(b.insert(77));
         assert!(b.insert(-9));
@@ -739,13 +1168,13 @@ mod test_set {
         let mut a = HashSet::new();
         let mut b = HashSet::new();
 
-        assert!(a.insert(1i));
+        assert!(a.insert(1));
         assert!(a.insert(3));
         assert!(a.insert(5));
         assert!(a.insert(9));
         assert!(a.insert(11));
 
-        assert!(b.insert(3i));
+        assert!(b.insert(3));
         assert!(b.insert(9));
 
         let mut i = 0;
@@ -762,13 +1191,13 @@ mod test_set {
         let mut a = HashSet::new();
         let mut b = HashSet::new();
 
-        assert!(a.insert(1i));
+        assert!(a.insert(1));
         assert!(a.insert(3));
         assert!(a.insert(5));
         assert!(a.insert(9));
         assert!(a.insert(11));
 
-        assert!(b.insert(-2i));
+        assert!(b.insert(-2));
         assert!(b.insert(3));
         assert!(b.insert(9));
         assert!(b.insert(14));
@@ -788,7 +1217,7 @@ mod test_set {
         let mut a = HashSet::new();
         let mut b = HashSet::new();
 
-        assert!(a.insert(1i));
+        assert!(a.insert(1));
         assert!(a.insert(3));
         assert!(a.insert(5));
         assert!(a.insert(9));
@@ -797,7 +1226,7 @@ mod test_set {
         assert!(a.insert(19));
         assert!(a.insert(24));
 
-        assert!(b.insert(-2i));
+        assert!(b.insert(-2));
         assert!(b.insert(1));
         assert!(b.insert(5));
         assert!(b.insert(9));
@@ -815,11 +1244,11 @@ mod test_set {
 
     #[test]
     fn test_from_iter() {
-        let xs = [1i, 2, 3, 4, 5, 6, 7, 8, 9];
+        let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-        let set: HashSet<int> = xs.iter().map(|&x| x).collect();
+        let set: HashSet<_> = xs.iter().cloned().collect();
 
-        for x in xs.iter() {
+        for x in &xs {
             assert!(set.contains(x));
         }
     }
@@ -836,7 +1265,7 @@ mod test_set {
         };
 
         let v = hs.into_iter().collect::<Vec<char>>();
-        assert!(['a', 'b'] == v || ['b', 'a'] == v);
+        assert!(v == ['a', 'b'] || v == ['b', 'a']);
     }
 
     #[test]
@@ -845,13 +1274,13 @@ mod test_set {
         // I'm keeping them around to prevent a regression.
         let mut s1 = HashSet::new();
 
-        s1.insert(1i);
+        s1.insert(1);
         s1.insert(2);
         s1.insert(3);
 
         let mut s2 = HashSet::new();
 
-        s2.insert(1i);
+        s2.insert(1);
         s2.insert(2);
 
         assert!(s1 != s2);
@@ -863,15 +1292,112 @@ mod test_set {
 
     #[test]
     fn test_show() {
-        let mut set: HashSet<int> = HashSet::new();
-        let empty: HashSet<int> = HashSet::new();
+        let mut set = HashSet::new();
+        let empty = HashSet::<i32>::new();
 
-        set.insert(1i);
+        set.insert(1);
         set.insert(2);
 
-        let set_str = format!("{}", set);
+        let set_str = format!("{:?}", set);
 
         assert!(set_str == "{1, 2}" || set_str == "{2, 1}");
-        assert_eq!(format!("{}", empty), "{}");
+        assert_eq!(format!("{:?}", empty), "{}");
+    }
+
+    #[test]
+    fn test_trivial_drain() {
+        let mut s = HashSet::<i32>::new();
+        for _ in s.drain() {}
+        assert!(s.is_empty());
+        drop(s);
+
+        let mut s = HashSet::<i32>::new();
+        drop(s.drain());
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_drain() {
+        let mut s: HashSet<_> = (1..100).collect();
+
+        // try this a bunch of times to make sure we don't screw up internal state.
+        for _ in 0..20 {
+            assert_eq!(s.len(), 99);
+
+            {
+                let mut last_i = 0;
+                let mut d = s.drain();
+                for (i, x) in d.by_ref().take(50).enumerate() {
+                    last_i = i;
+                    assert!(x != 0);
+                }
+                assert_eq!(last_i, 49);
+            }
+
+            for _ in &s { panic!("s should be empty!"); }
+
+            // reset to try again.
+            s.extend(1..100);
+        }
+    }
+
+    #[test]
+    fn test_replace() {
+        use hash;
+
+        #[derive(Debug)]
+        struct Foo(&'static str, i32);
+
+        impl PartialEq for Foo {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl Eq for Foo {}
+
+        impl hash::Hash for Foo {
+            fn hash<H: hash::Hasher>(&self, h: &mut H) {
+                self.0.hash(h);
+            }
+        }
+
+        let mut s = HashSet::new();
+        assert_eq!(s.replace(Foo("a", 1)), None);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.replace(Foo("a", 2)), Some(Foo("a", 1)));
+        assert_eq!(s.len(), 1);
+
+        let mut it = s.iter();
+        assert_eq!(it.next(), Some(&Foo("a", 2)));
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn test_extend_ref() {
+        let mut a = HashSet::new();
+        a.insert(1);
+
+        a.extend(&[2, 3, 4]);
+
+        assert_eq!(a.len(), 4);
+        assert!(a.contains(&1));
+        assert!(a.contains(&2));
+        assert!(a.contains(&3));
+        assert!(a.contains(&4));
+
+        let mut b = HashSet::new();
+        b.insert(5);
+        b.insert(6);
+
+        a.extend(&b);
+
+        assert_eq!(a.len(), 6);
+        assert!(a.contains(&1));
+        assert!(a.contains(&2));
+        assert!(a.contains(&3));
+        assert!(a.contains(&4));
+        assert!(a.contains(&5));
+        assert!(a.contains(&6));
     }
 }

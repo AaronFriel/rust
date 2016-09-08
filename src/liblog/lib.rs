@@ -13,16 +13,16 @@
 //! # Examples
 //!
 //! ```
-//! #![feature(phase)]
-//! #[phase(plugin, link)] extern crate log;
+//! # #![feature(rustc_private)]
+//! #[macro_use] extern crate log;
 //!
 //! fn main() {
-//!     debug!("this is a debug {}", "message");
+//!     debug!("this is a debug {:?}", "message");
 //!     error!("this is printed by default");
 //!
 //!     if log_enabled!(log::INFO) {
-//!         let x = 3i * 4i; // expensive computation
-//!         info!("the answer was: {}", x);
+//!         let x = 3 * 4; // expensive computation
+//!         info!("the answer was: {:?}", x);
 //!     }
 //! }
 //! ```
@@ -124,11 +124,11 @@
 //!
 //! # Filtering results
 //!
-//! A RUST_LOG directive may include a regex filter. The syntax is to append `/`
-//! followed by a regex. Each message is checked against the regex, and is only
-//! logged if it matches. Note that the matching is done after formatting the log
-//! string but before adding any logging meta-data. There is a single filter for all
-//! modules.
+//! A RUST_LOG directive may include a string filter. The syntax is to append
+//! `/` followed by a string. Each message is checked against the string and is
+//! only logged if it contains the string. Note that the matching is done after
+//! formatting the log string but before adding any logging meta-data. There is
+//! a single filter for all modules.
 //!
 //! Some examples:
 //!
@@ -157,33 +157,35 @@
 //! if logging is disabled, none of the components of the log will be executed.
 
 #![crate_name = "log"]
-#![experimental]
+#![unstable(feature = "rustc_private",
+            reason = "use the crates.io `log` library instead",
+            issue = "27812")]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/nightly/",
-       html_playground_url = "http://play.rust-lang.org/")]
-#![feature(macro_rules, unboxed_closures)]
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       test(attr(deny(warnings))))]
 #![deny(missing_docs)]
+#![cfg_attr(not(stage0), deny(warnings))]
 
-extern crate regex;
+#![feature(staged_api)]
 
 use std::cell::RefCell;
 use std::fmt;
-use std::io::LineBufferedWriter;
-use std::io;
+use std::io::{self, Stderr};
+use std::io::prelude::*;
 use std::mem;
-use std::os;
-use std::rt;
+use std::env;
 use std::slice;
-use std::sync::{Once, ONCE_INIT};
-
-use regex::Regex;
+use std::sync::{Mutex, ONCE_INIT, Once};
 
 use directive::LOG_LEVEL_NAMES;
 
+#[macro_use]
 pub mod macros;
+
 mod directive;
 
 /// Maximum logging level of a module that can be specified. Common logging
@@ -193,16 +195,12 @@ pub const MAX_LOG_LEVEL: u32 = 255;
 /// The default logging level of a crate if no other is specified.
 const DEFAULT_LOG_LEVEL: u32 = 1;
 
+static mut LOCK: *mut Mutex<(Vec<directive::LogDirective>, Option<String>)> = 0 as *mut _;
+
 /// An unsafe constant that is the maximum logging level of any module
 /// specified. This is the first line of defense to determining whether a
 /// logging statement should be run.
 static mut LOG_LEVEL: u32 = MAX_LOG_LEVEL;
-
-static mut DIRECTIVES: *const Vec<directive::LogDirective> =
-    0 as *const Vec<directive::LogDirective>;
-
-/// Optional regex filter.
-static mut FILTER: *const Regex = 0 as *const _;
 
 /// Debug log level
 pub const DEBUG: u32 = 4;
@@ -213,11 +211,13 @@ pub const WARN: u32 = 2;
 /// Error log level
 pub const ERROR: u32 = 1;
 
-thread_local!(static LOCAL_LOGGER: RefCell<Option<Box<Logger + Send>>> = {
-    RefCell::new(None)
-})
+thread_local! {
+    static LOCAL_LOGGER: RefCell<Option<Box<Logger + Send>>> = {
+        RefCell::new(None)
+    }
+}
 
-/// A trait used to represent an interface to a task-local logger. Each task
+/// A trait used to represent an interface to a thread-local logger. Each thread
 /// can have its own custom logger which can respond to logging messages
 /// however it likes.
 pub trait Logger {
@@ -226,21 +226,19 @@ pub trait Logger {
 }
 
 struct DefaultLogger {
-    handle: LineBufferedWriter<io::stdio::StdWriter>,
+    handle: Stderr,
 }
 
 /// Wraps the log level with fmt implementations.
-#[deriving(PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 pub struct LogLevel(pub u32);
 
-impl Copy for LogLevel {}
-
-impl fmt::Show for LogLevel {
+impl fmt::Display for LogLevel {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let LogLevel(level) = *self;
-        match LOG_LEVEL_NAMES.get(level as uint - 1) {
-            Some(name) => name.fmt(fmt),
-            None => level.fmt(fmt)
+        match LOG_LEVEL_NAMES.get(level as usize - 1) {
+            Some(ref name) => fmt::Display::fmt(name, fmt),
+            None => fmt::Display::fmt(&level, fmt),
         }
     }
 }
@@ -252,7 +250,7 @@ impl Logger for DefaultLogger {
                        record.level,
                        record.module_path,
                        record.args) {
-            Err(e) => panic!("failed to log: {}", e),
+            Err(e) => panic!("failed to log: {:?}", e),
             Ok(()) => {}
         }
     }
@@ -262,7 +260,7 @@ impl Drop for DefaultLogger {
     fn drop(&mut self) {
         // FIXME(#12628): is panicking the right thing to do?
         match self.handle.flush() {
-            Err(e) => panic!("failed to flush a logger: {}", e),
+            Err(e) => panic!("failed to flush a logger: {:?}", e),
             Ok(()) => {}
         }
     }
@@ -276,22 +274,23 @@ impl Drop for DefaultLogger {
 /// It is not recommended to call this function directly, rather it should be
 /// invoked through the logging family of macros.
 #[doc(hidden)]
-pub fn log(level: u32, loc: &'static LogLocation, args: &fmt::Arguments) {
+pub fn log(level: u32, loc: &'static LogLocation, args: fmt::Arguments) {
     // Test the literal string from args against the current filter, if there
     // is one.
-    match unsafe { FILTER.as_ref() } {
-        Some(filter) if !filter.is_match(args.to_string().as_slice()) => return,
-        _ => {}
+    unsafe {
+        let filter = (*LOCK).lock().unwrap();
+        if let Some(ref filter) = filter.1 {
+            if !args.to_string().contains(filter) {
+                return;
+            }
+        }
     }
 
     // Completely remove the local logger from TLS in case anyone attempts to
     // frob the slot while we're doing the logging. This will destroy any logger
     // set during logging.
-    let mut logger = LOCAL_LOGGER.with(|s| {
-        s.borrow_mut().take()
-    }).unwrap_or_else(|| {
-        box DefaultLogger { handle: io::stderr() } as Box<Logger + Send>
-    });
+    let logger = LOCAL_LOGGER.with(|s| s.borrow_mut().take());
+    let mut logger = logger.unwrap_or_else(|| Box::new(DefaultLogger { handle: io::stderr() }));
     logger.log(&LogRecord {
         level: LogLevel(level),
         args: args,
@@ -306,22 +305,20 @@ pub fn log(level: u32, loc: &'static LogLocation, args: &fmt::Arguments) {
 /// safely
 #[doc(hidden)]
 #[inline(always)]
-pub fn log_level() -> u32 { unsafe { LOG_LEVEL } }
+pub fn log_level() -> u32 {
+    unsafe { LOG_LEVEL }
+}
 
-/// Replaces the task-local logger with the specified logger, returning the old
+/// Replaces the thread-local logger with the specified logger, returning the old
 /// logger.
 pub fn set_logger(logger: Box<Logger + Send>) -> Option<Box<Logger + Send>> {
-    let mut l = Some(logger);
-    LOCAL_LOGGER.with(|slot| {
-        mem::replace(&mut *slot.borrow_mut(), l.take())
-    })
+    LOCAL_LOGGER.with(|slot| mem::replace(&mut *slot.borrow_mut(), Some(logger)))
 }
 
 /// A LogRecord is created by the logging macros, and passed as the only
 /// argument to Loggers.
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct LogRecord<'a> {
-
     /// The module path of where the LogRecord originated.
     pub module_path: &'a str,
 
@@ -329,23 +326,22 @@ pub struct LogRecord<'a> {
     pub level: LogLevel,
 
     /// The arguments from the log line.
-    pub args: &'a fmt::Arguments<'a>,
+    pub args: fmt::Arguments<'a>,
 
     /// The file of where the LogRecord originated.
     pub file: &'a str,
 
     /// The line number of where the LogRecord originated.
-    pub line: uint,
+    pub line: u32,
 }
 
 #[doc(hidden)]
+#[derive(Copy, Clone)]
 pub struct LogLocation {
     pub module_path: &'static str,
     pub file: &'static str,
-    pub line: uint,
+    pub line: u32,
 }
-
-impl Copy for LogLocation {}
 
 /// Tests whether a given module's name is enabled for a particular level of
 /// logging. This is the second layer of defense about determining whether a
@@ -353,33 +349,32 @@ impl Copy for LogLocation {}
 #[doc(hidden)]
 pub fn mod_enabled(level: u32, module: &str) -> bool {
     static INIT: Once = ONCE_INIT;
-    INIT.doit(init);
+    INIT.call_once(init);
 
     // It's possible for many threads are in this function, only one of them
     // will perform the global initialization, but all of them will need to check
     // again to whether they should really be here or not. Hence, despite this
     // check being expanded manually in the logging macro, this function checks
     // the log level again.
-    if level > unsafe { LOG_LEVEL } { return false }
+    if level > unsafe { LOG_LEVEL } {
+        return false;
+    }
 
     // This assertion should never get tripped unless we're in an at_exit
     // handler after logging has been torn down and a logging attempt was made.
-    assert!(unsafe { !DIRECTIVES.is_null() });
 
-    enabled(level, module, unsafe { (*DIRECTIVES).iter() })
+    unsafe {
+        let directives = (*LOCK).lock().unwrap();
+        enabled(level, module, directives.0.iter())
+    }
 }
 
-fn enabled(level: u32,
-           module: &str,
-           iter: slice::Items<directive::LogDirective>)
-           -> bool {
+fn enabled(level: u32, module: &str, iter: slice::Iter<directive::LogDirective>) -> bool {
     // Search for the longest match, the vector is assumed to be pre-sorted.
     for directive in iter.rev() {
         match directive.name {
-            Some(ref name) if !module.starts_with(name.as_slice()) => {},
-            Some(..) | None => {
-                return level <= directive.level
-            }
+            Some(ref name) if !module.starts_with(&name[..]) => {}
+            Some(..) | None => return level <= directive.level,
         }
     }
     level <= DEFAULT_LOG_LEVEL
@@ -390,9 +385,9 @@ fn enabled(level: u32,
 /// This is not threadsafe at all, so initialization is performed through a
 /// `Once` primitive (and this function is called from that primitive).
 fn init() {
-    let (mut directives, filter) = match os::getenv("RUST_LOG") {
-        Some(spec) => directive::parse_logging_spec(spec.as_slice()),
-        None => (Vec::new(), None),
+    let (mut directives, filter) = match env::var("RUST_LOG") {
+        Ok(spec) => directive::parse_logging_spec(&spec[..]),
+        Err(..) => (Vec::new(), None),
     };
 
     // Sort the provided directives by length of their name, this allows a
@@ -404,34 +399,15 @@ fn init() {
     });
 
     let max_level = {
-        let max = directives.iter().max_by(|d| d.level);
+        let max = directives.iter().max_by_key(|d| d.level);
         max.map(|d| d.level).unwrap_or(DEFAULT_LOG_LEVEL)
     };
 
     unsafe {
         LOG_LEVEL = max_level;
 
-        assert!(FILTER.is_null());
-        match filter {
-            Some(f) => FILTER = mem::transmute(box f),
-            None => {}
-        }
-
-        assert!(DIRECTIVES.is_null());
-        DIRECTIVES = mem::transmute(box directives);
-
-        // Schedule the cleanup for the globals for when the runtime exits.
-        rt::at_exit(move |:| {
-            assert!(!DIRECTIVES.is_null());
-            let _directives: Box<Vec<directive::LogDirective>> =
-                mem::transmute(DIRECTIVES);
-            DIRECTIVES = 0 as *const Vec<directive::LogDirective>;
-
-            if !FILTER.is_null() {
-                let _filter: Box<Regex> = mem::transmute(FILTER);
-                FILTER = 0 as *const _;
-            }
-        });
+        assert!(LOCK.is_null());
+        LOCK = Box::into_raw(Box::new(Mutex::new((directives, filter))));
     }
 }
 
@@ -442,16 +418,14 @@ mod tests {
 
     #[test]
     fn match_full_path() {
-        let dirs = [
-            LogDirective {
-                name: Some("crate2".to_string()),
-                level: 3
-            },
-            LogDirective {
-                name: Some("crate1::mod1".to_string()),
-                level: 2
-            }
-        ];
+        let dirs = [LogDirective {
+                        name: Some("crate2".to_string()),
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 2,
+                    }];
         assert!(enabled(2, "crate1::mod1", dirs.iter()));
         assert!(!enabled(3, "crate1::mod1", dirs.iter()));
         assert!(enabled(3, "crate2", dirs.iter()));
@@ -460,49 +434,72 @@ mod tests {
 
     #[test]
     fn no_match() {
-        let dirs = [
-            LogDirective { name: Some("crate2".to_string()), level: 3 },
-            LogDirective { name: Some("crate1::mod1".to_string()), level: 2 }
-        ];
+        let dirs = [LogDirective {
+                        name: Some("crate2".to_string()),
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 2,
+                    }];
         assert!(!enabled(2, "crate3", dirs.iter()));
     }
 
     #[test]
     fn match_beginning() {
-        let dirs = [
-            LogDirective { name: Some("crate2".to_string()), level: 3 },
-            LogDirective { name: Some("crate1::mod1".to_string()), level: 2 }
-        ];
+        let dirs = [LogDirective {
+                        name: Some("crate2".to_string()),
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 2,
+                    }];
         assert!(enabled(3, "crate2::mod1", dirs.iter()));
     }
 
     #[test]
     fn match_beginning_longest_match() {
-        let dirs = [
-            LogDirective { name: Some("crate2".to_string()), level: 3 },
-            LogDirective { name: Some("crate2::mod".to_string()), level: 4 },
-            LogDirective { name: Some("crate1::mod1".to_string()), level: 2 }
-        ];
+        let dirs = [LogDirective {
+                        name: Some("crate2".to_string()),
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate2::mod".to_string()),
+                        level: 4,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 2,
+                    }];
         assert!(enabled(4, "crate2::mod1", dirs.iter()));
         assert!(!enabled(4, "crate2", dirs.iter()));
     }
 
     #[test]
     fn match_default() {
-        let dirs = [
-            LogDirective { name: None, level: 3 },
-            LogDirective { name: Some("crate1::mod1".to_string()), level: 2 }
-        ];
+        let dirs = [LogDirective {
+                        name: None,
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 2,
+                    }];
         assert!(enabled(2, "crate1::mod1", dirs.iter()));
         assert!(enabled(3, "crate2::mod2", dirs.iter()));
     }
 
     #[test]
     fn zero_level() {
-        let dirs = [
-            LogDirective { name: None, level: 3 },
-            LogDirective { name: Some("crate1::mod1".to_string()), level: 0 }
-        ];
+        let dirs = [LogDirective {
+                        name: None,
+                        level: 3,
+                    },
+                    LogDirective {
+                        name: Some("crate1::mod1".to_string()),
+                        level: 0,
+                    }];
         assert!(!enabled(1, "crate1::mod1", dirs.iter()));
         assert!(enabled(3, "crate2::mod2", dirs.iter()));
     }

@@ -10,6 +10,9 @@
 
 fn main() {
     let (x, y) = ();
-//~^ ERROR expected `()`, found `(_, _)` (expected (), found tuple)
+//~^ ERROR mismatched types
+//~| expected type `()`
+//~| found type `(_, _)`
+//~| expected (), found tuple
     return x;
 }

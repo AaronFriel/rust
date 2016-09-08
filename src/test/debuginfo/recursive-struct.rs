@@ -9,7 +9,6 @@
 // except according to those terms.
 
 // ignore-tidy-linelength
-// ignore-android: FIXME(#10381)
 // ignore-lldb
 
 // compile-flags:-g
@@ -69,6 +68,9 @@
 // gdb-command:continue
 
 #![allow(unused_variables)]
+#![feature(box_syntax)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 use self::Opt::{Empty, Val};
 
@@ -104,7 +106,7 @@ struct LongCycle4<T> {
 
 struct LongCycleWithAnonymousTypes {
     next: Opt<Box<Box<Box<Box<Box<LongCycleWithAnonymousTypes>>>>>>,
-    value: uint,
+    value: usize,
 }
 
 // This test case makes sure that recursive structs are properly described. The Node structs are
@@ -127,10 +129,10 @@ fn main() {
         next: Val {
             val: box UniqueNode {
                 next: Empty,
-                value: 1_u16,
+                value: 1,
             }
         },
-        value: 0_u16,
+        value: 0,
     };
 
     let unique_unique: Box<UniqueNode<u32>> = box UniqueNode {
@@ -143,7 +145,7 @@ fn main() {
         value: 2,
     };
 
-    let vec_unique: [UniqueNode<f32>, ..1] = [UniqueNode {
+    let vec_unique: [UniqueNode<f32>; 1] = [UniqueNode {
         next: Val {
             val: box UniqueNode {
                 next: Empty,
@@ -218,4 +220,3 @@ fn main() {
 }
 
 fn zzz() {()}
-

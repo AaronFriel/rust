@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-bitrig
 // compile-flags: -C codegen-units=3
+// ignore-emscripten no threads support
 
 // Test unwinding through multiple compilation units.
 
@@ -19,7 +21,10 @@
 // In any case, this test should let us know if enabling parallel codegen ever
 // breaks unwinding.
 
-fn pad() -> uint { 0 }
+
+use std::thread;
+
+fn pad() -> usize { 0 }
 
 mod a {
     pub fn f() {
@@ -34,5 +39,5 @@ mod b {
 }
 
 fn main() {
-    std::task::try(move|| { ::b::g() }).unwrap_err();
+    thread::spawn(move|| { ::b::g() }).join().unwrap_err();
 }

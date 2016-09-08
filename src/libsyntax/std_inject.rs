@@ -10,198 +10,86 @@
 
 use ast;
 use attr;
-use codemap::DUMMY_SP;
-use codemap;
-use fold::Folder;
-use fold;
-use parse::token::InternedString;
-use parse::token::special_idents;
-use parse::token;
+use syntax_pos::{DUMMY_SP, Span};
+use codemap::{self, ExpnInfo, NameAndSpan, MacroAttribute};
+use parse::token::{intern, InternedString, keywords};
+use parse::{token, ParseSess};
 use ptr::P;
-use util::small_vector::SmallVector;
 
-use std::mem;
-
-pub fn maybe_inject_crates_ref(krate: ast::Crate, alt_std_name: Option<String>)
-                               -> ast::Crate {
-    if use_std(&krate) {
-        inject_crates_ref(krate, alt_std_name)
-    } else {
-        krate
-    }
-}
-
-pub fn maybe_inject_prelude(krate: ast::Crate) -> ast::Crate {
-    if use_std(&krate) {
-        inject_prelude(krate)
-    } else {
-        krate
-    }
-}
-
-fn use_std(krate: &ast::Crate) -> bool {
-    !attr::contains_name(krate.attrs.as_slice(), "no_std")
-}
-
-fn no_prelude(attrs: &[ast::Attribute]) -> bool {
-    attr::contains_name(attrs, "no_implicit_prelude")
-}
-
-struct StandardLibraryInjector<'a> {
-    alt_std_name: Option<String>,
-}
-
-impl<'a> fold::Folder for StandardLibraryInjector<'a> {
-    fn fold_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
-
-        // The name to use in `extern crate "name" as std;`
-        let actual_crate_name = match self.alt_std_name {
-            Some(ref s) => token::intern_and_get_ident(s.as_slice()),
-            None => token::intern_and_get_ident("std"),
-        };
-
-        let mut vis = vec!(ast::ViewItem {
-            node: ast::ViewItemExternCrate(token::str_to_ident("std"),
-                                           Some((actual_crate_name, ast::CookedStr)),
-                                           ast::DUMMY_NODE_ID),
-            attrs: vec!(
-                attr::mk_attr_outer(attr::mk_attr_id(), attr::mk_list_item(
-                        InternedString::new("phase"),
-                        vec!(
-                            attr::mk_word_item(InternedString::new("plugin")),
-                            attr::mk_word_item(InternedString::new("link")
-                        ))))),
-            vis: ast::Inherited,
-            span: DUMMY_SP
-        });
-
-        // `extern crate` must be precede `use` items
-        mem::swap(&mut vis, &mut krate.module.view_items);
-        krate.module.view_items.extend(vis.into_iter());
-
-        // don't add #![no_std] here, that will block the prelude injection later.
-        // Add it during the prelude injection instead.
-
-        // Add #![feature(phase)] here, because we use #[phase] on extern crate std.
-        let feat_phase_attr = attr::mk_attr_inner(attr::mk_attr_id(),
-                                                  attr::mk_list_item(
-                                  InternedString::new("feature"),
-                                  vec![attr::mk_word_item(InternedString::new("phase"))],
-                              ));
-        // std_inject runs after feature checking so manually mark this attr
-        attr::mark_used(&feat_phase_attr);
-        krate.attrs.push(feat_phase_attr);
-
-        krate
-    }
-}
-
-fn inject_crates_ref(krate: ast::Crate, alt_std_name: Option<String>) -> ast::Crate {
-    let mut fold = StandardLibraryInjector {
-        alt_std_name: alt_std_name,
+/// Craft a span that will be ignored by the stability lint's
+/// call to codemap's is_internal check.
+/// The expanded code uses the unstable `#[prelude_import]` attribute.
+fn ignored_span(sess: &ParseSess, sp: Span) -> Span {
+    let info = ExpnInfo {
+        call_site: DUMMY_SP,
+        callee: NameAndSpan {
+            format: MacroAttribute(intern("std_inject")),
+            span: None,
+            allow_internal_unstable: true,
+        }
     };
-    fold.fold_crate(krate)
+    let expn_id = sess.codemap().record_expansion(info);
+    let mut sp = sp;
+    sp.expn_id = expn_id;
+    return sp;
 }
 
-struct PreludeInjector<'a>;
+pub fn no_core(krate: &ast::Crate) -> bool {
+    attr::contains_name(&krate.attrs, "no_core")
+}
 
+pub fn no_std(krate: &ast::Crate) -> bool {
+    attr::contains_name(&krate.attrs, "no_std") || no_core(krate)
+}
 
-impl<'a> fold::Folder for PreludeInjector<'a> {
-    fn fold_crate(&mut self, mut krate: ast::Crate) -> ast::Crate {
-        // Add #![no_std] here, so we don't re-inject when compiling pretty-printed source.
-        // This must happen here and not in StandardLibraryInjector because this
-        // fold happens second.
-
-        let no_std_attr = attr::mk_attr_inner(attr::mk_attr_id(),
-                                              attr::mk_word_item(InternedString::new("no_std")));
-        // std_inject runs after feature checking so manually mark this attr
-        attr::mark_used(&no_std_attr);
-        krate.attrs.push(no_std_attr);
-
-        if !no_prelude(krate.attrs.as_slice()) {
-            // only add `use std::prelude::*;` if there wasn't a
-            // `#![no_implicit_prelude]` at the crate level.
-            // fold_mod() will insert glob path.
-            let globs_attr = attr::mk_attr_inner(attr::mk_attr_id(),
-                                                 attr::mk_list_item(
-                InternedString::new("feature"),
-                vec!(
-                    attr::mk_word_item(InternedString::new("globs")),
-                )));
-            // std_inject runs after feature checking so manually mark this attr
-            attr::mark_used(&globs_attr);
-            krate.attrs.push(globs_attr);
-
-            krate.module = self.fold_mod(krate.module);
-        }
-        krate
+pub fn maybe_inject_crates_ref(sess: &ParseSess,
+                               mut krate: ast::Crate,
+                               alt_std_name: Option<String>)
+                               -> ast::Crate {
+    if no_core(&krate) {
+        return krate;
     }
 
-    fn fold_item(&mut self, item: P<ast::Item>) -> SmallVector<P<ast::Item>> {
-        if !no_prelude(item.attrs.as_slice()) {
-            // only recur if there wasn't `#![no_implicit_prelude]`
-            // on this item, i.e. this means that the prelude is not
-            // implicitly imported though the whole subtree
-            fold::noop_fold_item(item, self)
-        } else {
-            SmallVector::one(item)
-        }
-    }
+    let name = if no_std(&krate) { "core" } else { "std" };
+    let crate_name = token::intern(&alt_std_name.unwrap_or(name.to_string()));
 
-    fn fold_mod(&mut self, ast::Mod {inner, view_items, items}: ast::Mod) -> ast::Mod {
-        let prelude_path = ast::Path {
-            span: DUMMY_SP,
-            global: false,
-            segments: vec!(
-                ast::PathSegment {
-                    identifier: token::str_to_ident("std"),
-                    parameters: ast::PathParameters::none(),
-                },
-                ast::PathSegment {
-                    identifier: token::str_to_ident("prelude"),
-                    parameters: ast::PathParameters::none(),
+    krate.module.items.insert(0, P(ast::Item {
+        attrs: vec![attr::mk_attr_outer(attr::mk_attr_id(),
+                                        attr::mk_word_item(InternedString::new("macro_use")))],
+        vis: ast::Visibility::Inherited,
+        node: ast::ItemKind::ExternCrate(Some(crate_name)),
+        ident: token::str_to_ident(name),
+        id: ast::DUMMY_NODE_ID,
+        span: DUMMY_SP,
+    }));
+
+    let span = ignored_span(sess, DUMMY_SP);
+    krate.module.items.insert(0, P(ast::Item {
+        attrs: vec![ast::Attribute {
+            node: ast::Attribute_ {
+                style: ast::AttrStyle::Outer,
+                value: P(ast::MetaItem {
+                    node: ast::MetaItemKind::Word(token::intern_and_get_ident("prelude_import")),
+                    span: span,
                 }),
-        };
+                id: attr::mk_attr_id(),
+                is_sugared_doc: false,
+            },
+            span: span,
+        }],
+        vis: ast::Visibility::Inherited,
+        node: ast::ItemKind::Use(P(codemap::dummy_spanned(ast::ViewPathGlob(ast::Path {
+            global: false,
+            segments: vec![name, "prelude", "v1"].into_iter().map(|name| ast::PathSegment {
+                identifier: token::str_to_ident(name),
+                parameters: ast::PathParameters::none(),
+            }).collect(),
+            span: span,
+        })))),
+        id: ast::DUMMY_NODE_ID,
+        ident: keywords::Invalid.ident(),
+        span: span,
+    }));
 
-        let (crates, uses) = view_items.partitioned(|x| {
-            match x.node {
-                ast::ViewItemExternCrate(..) => true,
-                _ => false,
-            }
-        });
-
-        // add prelude after any `extern crate` but before any `use`
-        let mut view_items = crates;
-        let vp = P(codemap::dummy_spanned(ast::ViewPathGlob(prelude_path, ast::DUMMY_NODE_ID)));
-        view_items.push(ast::ViewItem {
-            node: ast::ViewItemUse(vp),
-            attrs: vec![ast::Attribute {
-                span: DUMMY_SP,
-                node: ast::Attribute_ {
-                    id: attr::mk_attr_id(),
-                    style: ast::AttrOuter,
-                    value: P(ast::MetaItem {
-                        span: DUMMY_SP,
-                        node: ast::MetaWord(token::get_name(
-                                special_idents::prelude_import.name)),
-                    }),
-                    is_sugared_doc: false,
-                },
-            }],
-            vis: ast::Inherited,
-            span: DUMMY_SP,
-        });
-        view_items.extend(uses.into_iter());
-
-        fold::noop_fold_mod(ast::Mod {
-            inner: inner,
-            view_items: view_items,
-            items: items
-        }, self)
-    }
-}
-
-fn inject_prelude(krate: ast::Crate) -> ast::Crate {
-    let mut fold = PreludeInjector;
-    fold.fold_crate(krate)
+    krate
 }

@@ -10,33 +10,38 @@
 
 // Test structs with always-unsized fields.
 
+
+#![allow(warnings)]
+#![feature(box_syntax, unsize, raw)]
+
 use std::mem;
 use std::raw;
+use std::slice;
 
 struct Foo<T> {
     f: [T],
 }
 
 struct Bar {
-    f1: uint,
-    f2: [uint],
+    f1: usize,
+    f2: [usize],
 }
 
 struct Baz {
-    f1: uint,
+    f1: usize,
     f2: str,
 }
 
 trait Tr {
-    fn foo(&self) -> uint;
+    fn foo(&self) -> usize;
 }
 
 struct St {
-    f: uint
+    f: usize
 }
 
 impl Tr for St {
-    fn foo(&self) -> uint {
+    fn foo(&self) -> usize {
         self.f
     }
 }
@@ -60,31 +65,30 @@ pub fn main() {
 
     unsafe {
         struct Foo_<T> {
-            f: [T, ..3]
+            f: [T; 3]
         }
 
-        let data = box Foo_{f: [1i32, 2, 3] };
-        let x: &Foo<i32> = mem::transmute(raw::Slice { len: 3, data: &*data });
-        assert!(x.f.len() == 3);
-        assert!(x.f[0] == 1);
-        assert!(x.f[1] == 2);
-        assert!(x.f[2] == 3);
+        let data: Box<Foo_<i32>> = box Foo_{f: [1, 2, 3] };
+        let x: &Foo<i32> = mem::transmute(slice::from_raw_parts(&*data, 3));
+        assert_eq!(x.f.len(), 3);
+        assert_eq!(x.f[0], 1);
 
         struct Baz_ {
-            f1: uint,
-            f2: [u8, ..5],
+            f1: usize,
+            f2: [u8; 5],
         }
 
-        let data = box Baz_{ f1: 42, f2: ['a' as u8, 'b' as u8, 'c' as u8, 'd' as u8, 'e' as u8] };
-        let x: &Baz = mem::transmute( raw::Slice { len: 5, data: &*data } );
-        assert!(x.f1 == 42);
+        let data: Box<_> = box Baz_ {
+            f1: 42, f2: ['a' as u8, 'b' as u8, 'c' as u8, 'd' as u8, 'e' as u8] };
+        let x: &Baz = mem::transmute(slice::from_raw_parts(&*data, 5));
+        assert_eq!(x.f1, 42);
         let chs: Vec<char> = x.f2.chars().collect();
-        assert!(chs.len() == 5);
-        assert!(chs[0] == 'a');
-        assert!(chs[1] == 'b');
-        assert!(chs[2] == 'c');
-        assert!(chs[3] == 'd');
-        assert!(chs[4] == 'e');
+        assert_eq!(chs.len(), 5);
+        assert_eq!(chs[0], 'a');
+        assert_eq!(chs[1], 'b');
+        assert_eq!(chs[2], 'c');
+        assert_eq!(chs[3], 'd');
+        assert_eq!(chs[4], 'e');
 
         struct Qux_ {
             f: St
@@ -93,9 +97,9 @@ pub fn main() {
         let obj: Box<St> = box St { f: 42 };
         let obj: &Tr = &*obj;
         let obj: raw::TraitObject = mem::transmute(&*obj);
-        let data = box Qux_{ f: St { f: 234 } };
+        let data: Box<_> = box Qux_{ f: St { f: 234 } };
         let x: &Qux = mem::transmute(raw::TraitObject { vtable: obj.vtable,
                                                         data: mem::transmute(&*data) });
-        assert!(x.f.foo() == 234);
+        assert_eq!(x.f.foo(), 234);
     }
 }

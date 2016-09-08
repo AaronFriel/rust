@@ -10,62 +10,61 @@
 
 // Test slicing expressions on slices and Vecs.
 
-#![feature(slicing_syntax)]
 
 fn main() {
-    let x: &[int] = &[1, 2, 3, 4, 5];
-    let cmp: &[int] = &[1, 2, 3, 4, 5];
-    assert!(x[] == cmp)
-    let cmp: &[int] = &[3, 4, 5];
-    assert!(x[2..] == cmp)
-    let cmp: &[int] = &[1, 2, 3];
-    assert!(x[..3] == cmp)
-    let cmp: &[int] = &[2, 3, 4];
-    assert!(x[1..4] == cmp)
+    let x: &[isize] = &[1, 2, 3, 4, 5];
+    let cmp: &[isize] = &[1, 2, 3, 4, 5];
+    assert_eq!(&x[..], cmp);
+    let cmp: &[isize] = &[3, 4, 5];
+    assert_eq!(&x[2..], cmp);
+    let cmp: &[isize] = &[1, 2, 3];
+    assert_eq!(&x[..3], cmp);
+    let cmp: &[isize] = &[2, 3, 4];
+    assert_eq!(&x[1..4], cmp);
 
-    let x: Vec<int> = vec![1, 2, 3, 4, 5];
-    let cmp: &[int] = &[1, 2, 3, 4, 5];
-    assert!(x[] == cmp)
-    let cmp: &[int] = &[3, 4, 5];
-    assert!(x[2..] == cmp)
-    let cmp: &[int] = &[1, 2, 3];
-    assert!(x[..3] == cmp)
-    let cmp: &[int] = &[2, 3, 4];
-    assert!(x[1..4] == cmp)
+    let x: Vec<isize> = vec![1, 2, 3, 4, 5];
+    let cmp: &[isize] = &[1, 2, 3, 4, 5];
+    assert_eq!(&x[..], cmp);
+    let cmp: &[isize] = &[3, 4, 5];
+    assert_eq!(&x[2..], cmp);
+    let cmp: &[isize] = &[1, 2, 3];
+    assert_eq!(&x[..3], cmp);
+    let cmp: &[isize] = &[2, 3, 4];
+    assert_eq!(&x[1..4], cmp);
 
-    let x: &mut [int] = &mut [1, 2, 3, 4, 5];
+    let x: &mut [isize] = &mut [1, 2, 3, 4, 5];
     {
-        let cmp: &mut [int] = &mut [1, 2, 3, 4, 5];
-        assert!(x[mut] == cmp)
+        let cmp: &mut [isize] = &mut [1, 2, 3, 4, 5];
+        assert_eq!(&mut x[..], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [3, 4, 5];
-        assert!(x[mut 2..] == cmp)
+        let cmp: &mut [isize] = &mut [3, 4, 5];
+        assert_eq!(&mut x[2..], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [1, 2, 3];
-        assert!(x[mut ..3] == cmp)
+        let cmp: &mut [isize] = &mut [1, 2, 3];
+        assert_eq!(&mut x[..3], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [2, 3, 4];
-        assert!(x[mut 1..4] == cmp)
+        let cmp: &mut [isize] = &mut [2, 3, 4];
+        assert_eq!(&mut x[1..4], cmp);
     }
 
-    let mut x: Vec<int> = vec![1, 2, 3, 4, 5];
+    let mut x: Vec<isize> = vec![1, 2, 3, 4, 5];
     {
-        let cmp: &mut [int] = &mut [1, 2, 3, 4, 5];
-        assert!(x[mut] == cmp)
+        let cmp: &mut [isize] = &mut [1, 2, 3, 4, 5];
+        assert_eq!(&mut x[..], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [3, 4, 5];
-        assert!(x[mut 2..] == cmp)
+        let cmp: &mut [isize] = &mut [3, 4, 5];
+        assert_eq!(&mut x[2..], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [1, 2, 3];
-        assert!(x[mut ..3] == cmp)
+        let cmp: &mut [isize] = &mut [1, 2, 3];
+        assert_eq!(&mut x[..3], cmp);
     }
     {
-        let cmp: &mut [int] = &mut [2, 3, 4];
-        assert!(x[mut 1..4] == cmp)
+        let cmp: &mut [isize] = &mut [2, 3, 4];
+        assert_eq!(&mut x[1..4], cmp);
     }
 }

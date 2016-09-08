@@ -8,13 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ensure that the TaskRng isn't/doesn't become accidentally sendable.
+// ensure that the ThreadRng isn't/doesn't become accidentally sendable.
 
-use std::rand;
+use std::__rand::ThreadRng;
 
 fn test_send<S: Send>() {}
 
 pub fn main() {
-    test_send::<rand::TaskRng>();
-    //~^ ERROR `core::kinds::Send` is not implemented
+    test_send::<ThreadRng>(); //~ ERROR std::marker::Send` is not satisfied
 }

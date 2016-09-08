@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-static mut DROP_RAN: int = 0;
+// no-prefer-dynamic
+
+static mut DROP_RAN: isize = 0;
 
 struct Foo;
 impl Drop for Foo {
@@ -17,15 +19,16 @@ impl Drop for Foo {
     }
 }
 
-struct Fat<Sized? T> {
+struct Fat<T: ?Sized> {
     f: T
 }
 
 pub fn main() {
     {
-        let _x: Box<Fat<[Foo]>> = box Fat { f: [Foo, Foo, Foo] };
+        // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+        let _x: Box<Fat<[Foo]>> = Box::<Fat<[Foo; 3]>>::new(Fat { f: [Foo, Foo, Foo] });
     }
     unsafe {
-        assert!(DROP_RAN == 3);
+        assert_eq!(DROP_RAN, 3);
     }
 }

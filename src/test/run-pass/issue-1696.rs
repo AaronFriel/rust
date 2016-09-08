@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(collections)]
+
 extern crate collections;
 
 use std::collections::HashMap;
@@ -15,5 +17,5 @@ use std::collections::HashMap;
 pub fn main() {
     let mut m = HashMap::new();
     m.insert(b"foo".to_vec(), b"bar".to_vec());
-    println!("{}", m);
+    println!("{:?}", m);
 }

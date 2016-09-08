@@ -8,24 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::fmt::Show;
+use std::fmt::Debug;
 
 trait Str {}
 
-trait Something {
-    fn yay<T: Show>(_: Option<Self>, thing: &[T]);
+trait Something: Sized {
+    fn yay<T: Debug>(_: Option<Self>, thing: &[T]);
 }
 
 struct X { data: u32 }
 
 impl Something for X {
     fn yay<T: Str>(_:Option<X>, thing: &[T]) {
-//~^ ERROR in method `yay`, type parameter 0 requires bound `Str`, which is not required
-
+    //~^ ERROR the requirement `T: Str` appears on the impl method
     }
 }
 
 fn main() {
     let arr = &["one", "two", "three"];
-    println!("{}", Something::yay(None::<X>, arr));
+    println!("{:?}", Something::yay(None::<X>, arr));
 }

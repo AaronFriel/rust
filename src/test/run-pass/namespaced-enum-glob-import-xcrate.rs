@@ -9,7 +9,8 @@
 // except according to those terms.
 
 // aux-build:namespaced_enums.rs
-#![feature(globs)]
+
+// pretty-expanded FIXME #23616
 
 extern crate namespaced_enums;
 

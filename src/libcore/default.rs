@@ -9,95 +9,89 @@
 // except according to those terms.
 
 //! The `Default` trait for types which may have meaningful default values.
-//!
-//! Sometimes, you want to fall back to some kind of default value, and
-//! don't particularly care what it is. This comes up often with `struct`s
-//! that define a set of options:
-//!
-//! ```
-//! struct SomeOptions {
-//!     foo: int,
-//!     bar: f32,
-//! }
-//! ```
-//!
-//! How can we define some default values? You can use `Default`:
-//!
-//! ```
-//! use std::default::Default;
-//!
-//! #[deriving(Default)]
-//! struct SomeOptions {
-//!     foo: int,
-//!     bar: f32,
-//! }
-//!
-//!
-//! fn main() {
-//!     let options: SomeOptions = Default::default();
-//! }
-//! ```
-//!
-//! Now, you get all of the default values. Rust implements `Default` for various primitives types.
-//! If you have your own type, you need to implement `Default` yourself:
-//!
-//! ```
-//! use std::default::Default;
-//!
-//! enum Kind {
-//!     A,
-//!     B,
-//!     C,
-//! }
-//!
-//! impl Default for Kind {
-//!     fn default() -> Kind { Kind::A }
-//! }
-//!
-//! #[deriving(Default)]
-//! struct SomeOptions {
-//!     foo: int,
-//!     bar: f32,
-//!     baz: Kind,
-//! }
-//!
-//!
-//! fn main() {
-//!     let options: SomeOptions = Default::default();
-//! }
-//! ```
-//!
-//! If you want to override a particular option, but still retain the other defaults:
-//!
-//! ```
-//! # use std::default::Default;
-//! # #[deriving(Default)]
-//! # struct SomeOptions {
-//! #     foo: int,
-//! #     bar: f32,
-//! # }
-//! fn main() {
-//!     let options = SomeOptions { foo: 42, ..Default::default() };
-//! }
-//! ```
 
-#![stable]
+#![stable(feature = "rust1", since = "1.0.0")]
 
-/// A trait that types which have a useful default value should implement.
+/// A trait for giving a type a useful default value.
 ///
-/// A struct can derive default implementations of `Default` for basic types using
-/// `#[deriving(Default)]`.
+/// Sometimes, you want to fall back to some kind of default value, and
+/// don't particularly care what it is. This comes up often with `struct`s
+/// that define a set of options:
+///
+/// ```
+/// # #[allow(dead_code)]
+/// struct SomeOptions {
+///     foo: i32,
+///     bar: f32,
+/// }
+/// ```
+///
+/// How can we define some default values? You can use `Default`:
+///
+/// ```
+/// # #[allow(dead_code)]
+/// #[derive(Default)]
+/// struct SomeOptions {
+///     foo: i32,
+///     bar: f32,
+/// }
+///
+/// fn main() {
+///     let options: SomeOptions = Default::default();
+/// }
+/// ```
+///
+/// Now, you get all of the default values. Rust implements `Default` for various primitives types.
+///
+/// If you want to override a particular option, but still retain the other defaults:
+///
+/// ```
+/// # #[allow(dead_code)]
+/// # #[derive(Default)]
+/// # struct SomeOptions {
+/// #     foo: i32,
+/// #     bar: f32,
+/// # }
+/// fn main() {
+///     let options = SomeOptions { foo: 42, ..Default::default() };
+/// }
+/// ```
+///
+/// ## Derivable
+///
+/// This trait can be used with `#[derive]` if all of the type's fields implement
+/// `Default`. When `derive`d, it will use the default value for each field's type.
+///
+/// ## How can I implement `Default`?
+///
+/// Provide an implementation for the `default()` method that returns the value of
+/// your type that should be the default:
+///
+/// ```
+/// # #![allow(dead_code)]
+/// enum Kind {
+///     A,
+///     B,
+///     C,
+/// }
+///
+/// impl Default for Kind {
+///     fn default() -> Kind { Kind::A }
+/// }
+/// ```
 ///
 /// # Examples
 ///
 /// ```
-/// #[deriving(Default)]
+/// # #[allow(dead_code)]
+/// #[derive(Default)]
 /// struct SomeOptions {
-///     foo: int,
+///     foo: i32,
 ///     bar: f32,
 /// }
 /// ```
-pub trait Default {
+#[stable(feature = "rust1", since = "1.0.0")]
+pub trait Default: Sized {
     /// Returns the "default value" for a type.
     ///
     /// Default values are often some kind of initial value, identity value, or anything else that
@@ -108,18 +102,15 @@ pub trait Default {
     /// Using built-in default values:
     ///
     /// ```
-    /// use std::default::Default;
-    ///
     /// let i: i8 = Default::default();
     /// let (x, y): (Option<String>, f64) = Default::default();
-    /// let (a, b, (c, d)): (int, uint, (bool, bool)) = Default::default();
+    /// let (a, b, (c, d)): (i32, u32, (bool, bool)) = Default::default();
     /// ```
     ///
     /// Making your own:
     ///
     /// ```
-    /// use std::default::Default;
-    ///
+    /// # #[allow(dead_code)]
     /// enum Kind {
     ///     A,
     ///     B,
@@ -130,33 +121,35 @@ pub trait Default {
     ///     fn default() -> Kind { Kind::A }
     /// }
     /// ```
+    #[stable(feature = "rust1", since = "1.0.0")]
     fn default() -> Self;
 }
 
-macro_rules! default_impl(
+macro_rules! default_impl {
     ($t:ty, $v:expr) => {
+        #[stable(feature = "rust1", since = "1.0.0")]
         impl Default for $t {
             #[inline]
             fn default() -> $t { $v }
         }
     }
-)
+}
 
-default_impl!((), ())
-default_impl!(bool, false)
-default_impl!(char, '\x00')
+default_impl! { (), () }
+default_impl! { bool, false }
+default_impl! { char, '\x00' }
 
-default_impl!(uint, 0u)
-default_impl!(u8,  0u8)
-default_impl!(u16, 0u16)
-default_impl!(u32, 0u32)
-default_impl!(u64, 0u64)
+default_impl! { usize, 0 }
+default_impl! { u8, 0 }
+default_impl! { u16, 0 }
+default_impl! { u32, 0 }
+default_impl! { u64, 0 }
 
-default_impl!(int, 0i)
-default_impl!(i8,  0i8)
-default_impl!(i16, 0i16)
-default_impl!(i32, 0i32)
-default_impl!(i64, 0i64)
+default_impl! { isize, 0 }
+default_impl! { i8, 0 }
+default_impl! { i16, 0 }
+default_impl! { i32, 0 }
+default_impl! { i64, 0 }
 
-default_impl!(f32, 0.0f32)
-default_impl!(f64, 0.0f64)
+default_impl! { f32, 0.0f32 }
+default_impl! { f64, 0.0f64 }

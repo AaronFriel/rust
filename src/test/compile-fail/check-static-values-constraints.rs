@@ -10,7 +10,9 @@
 
 // Verifies all possible restrictions for statics values.
 
-use std::kinds::marker;
+#![feature(box_syntax)]
+
+use std::marker;
 
 struct WithDtor;
 
@@ -24,7 +26,7 @@ impl Drop for WithDtor {
 // 3. Expr calls with unsafe arguments for statics are rejected
 enum SafeEnum {
     Variant1,
-    Variant2(int),
+    Variant2(isize),
     Variant3(WithDtor),
     Variant4(String)
 }
@@ -35,7 +37,7 @@ static STATIC2: SafeEnum = SafeEnum::Variant2(0);
 
 // This one should fail
 static STATIC3: SafeEnum = SafeEnum::Variant3(WithDtor);
-//~^ ERROR statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
 
 
 // This enum will be used to test that variants
@@ -43,7 +45,7 @@ static STATIC3: SafeEnum = SafeEnum::Variant3(WithDtor);
 // a destructor.
 enum UnsafeEnum {
     Variant5,
-    Variant6(int)
+    Variant6(isize)
 }
 
 impl Drop for UnsafeEnum {
@@ -52,9 +54,9 @@ impl Drop for UnsafeEnum {
 
 
 static STATIC4: UnsafeEnum = UnsafeEnum::Variant5;
-//~^ ERROR statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
 static STATIC5: UnsafeEnum = UnsafeEnum::Variant6(0);
-//~^ ERROR statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
 
 
 struct SafeStruct {
@@ -69,7 +71,7 @@ static STATIC6: SafeStruct = SafeStruct{field1: SafeEnum::Variant1, field2: Safe
 // field2 has an unsafe value, hence this should fail
 static STATIC7: SafeStruct = SafeStruct{field1: SafeEnum::Variant1,
                                         field2: SafeEnum::Variant3(WithDtor)};
-//~^ ERROR statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
 
 // Test variadic constructor for structs. The base struct should be examined
 // as well as every field present in the constructor.
@@ -82,7 +84,7 @@ static STATIC8: SafeStruct = SafeStruct{field1: SafeEnum::Variant1,
 static STATIC9: SafeStruct = SafeStruct{field1: SafeEnum::Variant1,
                                         ..SafeStruct{field1: SafeEnum::Variant3(WithDtor),
                                                      field2: SafeEnum::Variant1}};
-//~^^ ERROR statics are not allowed to have destructors
+//~^^ ERROR destructors in statics are an unstable feature
 
 struct UnsafeStruct;
 
@@ -92,49 +94,51 @@ impl Drop for UnsafeStruct {
 
 // Types with destructors are not allowed for statics
 static STATIC10: UnsafeStruct = UnsafeStruct;
-//~^ ERROR statics are not allowed to have destructor
+//~^ ERROR destructors in statics are an unstable feature
 
 struct MyOwned;
 
 static STATIC11: Box<MyOwned> = box MyOwned;
-//~^ ERROR statics are not allowed to have custom pointers
+//~^ ERROR allocations are not allowed in statics
 
 // The following examples test that mutable structs are just forbidden
 // to have types with destructors
 // These should fail
 static mut STATIC12: UnsafeStruct = UnsafeStruct;
-//~^ ERROR mutable statics are not allowed to have destructors
-//~^^ ERROR statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
+//~^^ ERROR destructors in statics are an unstable feature
 
 static mut STATIC13: SafeStruct = SafeStruct{field1: SafeEnum::Variant1,
-//~^ ERROR mutable statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
                                              field2: SafeEnum::Variant3(WithDtor)};
-//~^ ERROR: statics are not allowed to have destructors
+//~^ ERROR: destructors in statics are an unstable feature
 
 static mut STATIC14: SafeStruct = SafeStruct {
-//~^ ERROR mutable statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
     field1: SafeEnum::Variant1,
     field2: SafeEnum::Variant4("str".to_string())
+//~^ ERROR calls in statics are limited to constant functions
 };
 
 static STATIC15: &'static [Box<MyOwned>] = &[
-    box MyOwned, //~ ERROR statics are not allowed to have custom pointers
-    box MyOwned, //~ ERROR statics are not allowed to have custom pointers
+    box MyOwned, //~ ERROR allocations are not allowed in statics
+    box MyOwned, //~ ERROR allocations are not allowed in statics
 ];
 
 static STATIC16: (&'static Box<MyOwned>, &'static Box<MyOwned>) = (
-    &box MyOwned, //~ ERROR statics are not allowed to have custom pointers
-    &box MyOwned, //~ ERROR statics are not allowed to have custom pointers
+    &box MyOwned, //~ ERROR allocations are not allowed in statics
+    &box MyOwned, //~ ERROR allocations are not allowed in statics
 );
 
 static mut STATIC17: SafeEnum = SafeEnum::Variant1;
-//~^ ERROR mutable statics are not allowed to have destructors
+//~^ ERROR destructors in statics are an unstable feature
 
-static STATIC19: Box<int> =
+static STATIC19: Box<isize> =
     box 3;
-//~^ ERROR statics are not allowed to have custom pointers
+//~^ ERROR allocations are not allowed in statics
 
 pub fn main() {
-    let y = { static x: Box<int> = box 3; x };
-    //~^ ERROR statics are not allowed to have custom pointers
+    let y = { static x: Box<isize> = box 3; x };
+    //~^ ERROR allocations are not allowed in statics
+    //~^^ ERROR cannot move out of static item
 }

@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 enum pattern { tabby, tortoiseshell, calico }
 enum breed { beagle, rottweiler, pug }
 type name = String;
@@ -19,7 +20,7 @@ fn noise(a: animal) -> Option<String> {
       animal::cat(..)    => { Some("meow".to_string()) }
       animal::dog(..)    => { Some("woof".to_string()) }
       animal::rabbit(..) => { None }
-      animal::tiger(..)  => { Some("roar".to_string()) }
+      animal::tiger  => { Some("roar".to_string()) }
     }
 }
 

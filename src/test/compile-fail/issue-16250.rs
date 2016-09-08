@@ -10,8 +10,10 @@
 
 #![deny(warnings)]
 
+pub struct Foo;
+
 extern {
-    pub fn foo(x: (int)); //~ ERROR found rust type `int` in foreign module
+    pub fn foo(x: (Foo)); //~ ERROR found struct without
 }
 
 fn main() {

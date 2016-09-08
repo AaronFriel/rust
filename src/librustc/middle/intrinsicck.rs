@@ -8,131 +8,165 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use metadata::csearch;
-use middle::def::DefFn;
-use middle::subst::Subst;
-use middle::ty::{TransmuteRestriction, ctxt, ty_bare_fn};
-use middle::ty::{mod, Ty};
+use dep_graph::DepNode;
+use hir::def::Def;
+use hir::def_id::DefId;
+use infer::InferCtxt;
+use traits::Reveal;
+use ty::{self, Ty, TyCtxt};
+use ty::layout::{LayoutError, Pointer, SizeSkeleton};
 
-use syntax::abi::RustIntrinsic;
-use syntax::ast::DefId;
+use syntax::abi::Abi::RustIntrinsic;
 use syntax::ast;
-use syntax::ast_map::NodeForeignItem;
-use syntax::codemap::Span;
-use syntax::parse::token;
-use syntax::visit::Visitor;
-use syntax::visit;
+use syntax_pos::Span;
+use hir::intravisit::{self, Visitor, FnKind};
+use hir;
 
-fn type_size_is_affected_by_type_parameters<'tcx>(tcx: &ty::ctxt<'tcx>, typ: Ty<'tcx>)
-                                                  -> bool {
-    let mut result = false;
-    ty::maybe_walk_ty(typ, |typ| {
-        match typ.sty {
-            ty::ty_uniq(_) | ty::ty_ptr(_) | ty::ty_rptr(..) |
-            ty::ty_bare_fn(..) | ty::ty_closure(..) => {
-                false
-            }
-            ty::ty_param(_) => {
-                result = true;
-                // No need to continue; we now know the result.
-                false
-            }
-            ty::ty_enum(did, ref substs) => {
-                for enum_variant in (*ty::enum_variants(tcx, did)).iter() {
-                    for argument_type in enum_variant.args.iter() {
-                        let argument_type = argument_type.subst(tcx, substs);
-                        result = result ||
-                            type_size_is_affected_by_type_parameters(
-                                tcx,
-                                argument_type);
-                    }
-                }
-
-                // Don't traverse substitutions.
-                false
-            }
-            ty::ty_struct(did, ref substs) => {
-                for field in ty::struct_fields(tcx, did, substs).iter() {
-                    result = result ||
-                        type_size_is_affected_by_type_parameters(tcx,
-                                                                 field.mt.ty);
-                }
-
-                // Don't traverse substitutions.
-                false
-            }
-            _ => true,
-        }
-    });
-    result
+pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+    let mut visitor = ItemVisitor {
+        tcx: tcx
+    };
+    tcx.visit_all_items_in_krate(DepNode::IntrinsicCheck, &mut visitor);
 }
 
-struct IntrinsicCheckingVisitor<'a, 'tcx: 'a> {
-    tcx: &'a ctxt<'tcx>,
+struct ItemVisitor<'a, 'tcx: 'a> {
+    tcx: TyCtxt<'a, 'tcx, 'tcx>
 }
 
-impl<'a, 'tcx> IntrinsicCheckingVisitor<'a, 'tcx> {
+impl<'a, 'tcx> ItemVisitor<'a, 'tcx> {
+    fn visit_const(&mut self, item_id: ast::NodeId, expr: &hir::Expr) {
+        let param_env = ty::ParameterEnvironment::for_item(self.tcx, item_id);
+        self.tcx.infer_ctxt(None, Some(param_env), Reveal::All).enter(|infcx| {
+            let mut visitor = ExprVisitor {
+                infcx: &infcx
+            };
+            visitor.visit_expr(expr);
+        });
+    }
+}
+
+struct ExprVisitor<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+    infcx: &'a InferCtxt<'a, 'gcx, 'tcx>
+}
+
+impl<'a, 'gcx, 'tcx> ExprVisitor<'a, 'gcx, 'tcx> {
     fn def_id_is_transmute(&self, def_id: DefId) -> bool {
-        let intrinsic = match ty::lookup_item_type(self.tcx, def_id).ty.sty {
-            ty::ty_bare_fn(ref bfty) => bfty.abi == RustIntrinsic,
+        let intrinsic = match self.infcx.tcx.lookup_item_type(def_id).ty.sty {
+            ty::TyFnDef(.., ref bfty) => bfty.abi == RustIntrinsic,
             _ => return false
         };
-        if def_id.krate == ast::LOCAL_CRATE {
-            match self.tcx.map.get(def_id.node) {
-                NodeForeignItem(ref item) if intrinsic => {
-                    token::get_ident(item.ident) ==
-                        token::intern_and_get_ident("transmute")
-                }
-                _ => false,
-            }
-        } else {
-            match csearch::get_item_path(self.tcx, def_id).last() {
-                Some(ref last) if intrinsic => {
-                    token::get_name(last.name()) ==
-                        token::intern_and_get_ident("transmute")
-                }
-                _ => false,
-            }
-        }
+        intrinsic && self.infcx.tcx.item_name(def_id).as_str() == "transmute"
     }
 
-    fn check_transmute(&self, span: Span, from: Ty<'tcx>, to: Ty<'tcx>, id: ast::NodeId) {
-        if type_size_is_affected_by_type_parameters(self.tcx, from) {
-            span_err!(self.tcx.sess, span, E0139,
-                      "cannot transmute from a type that contains type parameters");
-        }
-        if type_size_is_affected_by_type_parameters(self.tcx, to) {
-            span_err!(self.tcx.sess, span, E0140,
-                      "cannot transmute to a type that contains type parameters");
+    fn check_transmute(&self, span: Span, from: Ty<'gcx>, to: Ty<'gcx>, id: ast::NodeId) {
+        let sk_from = SizeSkeleton::compute(from, self.infcx);
+        let sk_to = SizeSkeleton::compute(to, self.infcx);
+
+        // Check for same size using the skeletons.
+        if let (Ok(sk_from), Ok(sk_to)) = (sk_from, sk_to) {
+            if sk_from.same_size(sk_to) {
+                return;
+            }
+
+            match (&from.sty, sk_to) {
+                (&ty::TyFnDef(..), SizeSkeleton::Known(size_to))
+                        if size_to == Pointer.size(&self.infcx.tcx.data_layout) => {
+                    // FIXME #19925 Remove this warning after a release cycle.
+                    let msg = format!("`{}` is now zero-sized and has to be cast \
+                                       to a pointer before transmuting to `{}`",
+                                      from, to);
+                    self.infcx.tcx.sess.add_lint(
+                        ::lint::builtin::TRANSMUTE_FROM_FN_ITEM_TYPES, id, span, msg);
+                    return;
+                }
+                _ => {}
+            }
         }
 
-        let restriction = TransmuteRestriction {
-            span: span,
-            from: from,
-            to: to,
-            id: id,
+        // Try to display a sensible error with as much information as possible.
+        let skeleton_string = |ty: Ty<'gcx>, sk| {
+            match sk {
+                Ok(SizeSkeleton::Known(size)) => {
+                    format!("{} bits", size.bits())
+                }
+                Ok(SizeSkeleton::Pointer { tail, .. }) => {
+                    format!("pointer to {}", tail)
+                }
+                Err(LayoutError::Unknown(bad)) => {
+                    if bad == ty {
+                        format!("size can vary")
+                    } else {
+                        format!("size can vary because of {}", bad)
+                    }
+                }
+                Err(err) => err.to_string()
+            }
         };
-        self.tcx.transmute_restrictions.borrow_mut().push(restriction);
+
+        span_err!(self.infcx.tcx.sess, span, E0512,
+                  "transmute called with differently sized types: \
+                   {} ({}) to {} ({})",
+                  from, skeleton_string(from, sk_from),
+                  to, skeleton_string(to, sk_to));
     }
 }
 
-impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
-    fn visit_expr(&mut self, expr: &ast::Expr) {
-        if let ast::ExprPath(..) = expr.node {
-            match ty::resolve_expr(self.tcx, expr) {
-                DefFn(did, _) if self.def_id_is_transmute(did) => {
-                    let typ = ty::node_id_to_type(self.tcx, expr.id);
+impl<'a, 'tcx, 'v> Visitor<'v> for ItemVisitor<'a, 'tcx> {
+    // const, static and N in [T; N].
+    fn visit_expr(&mut self, expr: &hir::Expr) {
+        self.tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
+            let mut visitor = ExprVisitor {
+                infcx: &infcx
+            };
+            visitor.visit_expr(expr);
+        });
+    }
+
+    fn visit_trait_item(&mut self, item: &hir::TraitItem) {
+        if let hir::ConstTraitItem(_, Some(ref expr)) = item.node {
+            self.visit_const(item.id, expr);
+        } else {
+            intravisit::walk_trait_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &hir::ImplItem) {
+        if let hir::ImplItemKind::Const(_, ref expr) = item.node {
+            self.visit_const(item.id, expr);
+        } else {
+            intravisit::walk_impl_item(self, item);
+        }
+    }
+
+    fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v hir::FnDecl,
+                b: &'v hir::Block, s: Span, id: ast::NodeId) {
+        if let FnKind::Closure(..) = fk {
+            span_bug!(s, "intrinsicck: closure outside of function")
+        }
+        let param_env = ty::ParameterEnvironment::for_item(self.tcx, id);
+        self.tcx.infer_ctxt(None, Some(param_env), Reveal::All).enter(|infcx| {
+            let mut visitor = ExprVisitor {
+                infcx: &infcx
+            };
+            visitor.visit_fn(fk, fd, b, s, id);
+        });
+    }
+}
+
+impl<'a, 'gcx, 'tcx, 'v> Visitor<'v> for ExprVisitor<'a, 'gcx, 'tcx> {
+    fn visit_expr(&mut self, expr: &hir::Expr) {
+        if let hir::ExprPath(..) = expr.node {
+            match self.infcx.tcx.expect_def(expr.id) {
+                Def::Fn(did) if self.def_id_is_transmute(did) => {
+                    let typ = self.infcx.tcx.node_id_to_type(expr.id);
                     match typ.sty {
-                        ty_bare_fn(ref bare_fn_ty) if bare_fn_ty.abi == RustIntrinsic => {
-                            if let ty::FnConverging(to) = bare_fn_ty.sig.output {
-                                let from = bare_fn_ty.sig.inputs[0];
-                                self.check_transmute(expr.span, from, to, expr.id);
-                            }
+                        ty::TyFnDef(.., ref bare_fn_ty) if bare_fn_ty.abi == RustIntrinsic => {
+                            let from = bare_fn_ty.sig.0.inputs[0];
+                            let to = bare_fn_ty.sig.0.output;
+                            self.check_transmute(expr.span, from, to, expr.id);
                         }
                         _ => {
-                            self.tcx
-                                .sess
-                                .span_bug(expr.span, "transmute wasn't a bare fn?!");
+                            span_bug!(expr.span, "transmute wasn't a bare fn?!");
                         }
                     }
                 }
@@ -140,11 +174,6 @@ impl<'a, 'tcx, 'v> Visitor<'v> for IntrinsicCheckingVisitor<'a, 'tcx> {
             }
         }
 
-        visit::walk_expr(self, expr);
+        intravisit::walk_expr(self, expr);
     }
-}
-
-pub fn check_crate(tcx: &ctxt) {
-    visit::walk_crate(&mut IntrinsicCheckingVisitor { tcx: tcx },
-                      tcx.map.krate());
 }

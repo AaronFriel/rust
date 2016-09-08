@@ -1,19 +1,29 @@
-# Use something that's not 'ruby' so we don't set up things like
-# RVM/bundler/ruby and whatnot. Right now 'rust' as a language actually
-# downloads a rust/cargo snapshot, which we don't really want for building rust.
-language: c
+language: generic
+sudo: required
+services:
+  - docker
 
-# The test suite is in general way too stressful for travis, especially in
-# terms of time limit and reliability. In the past we've tried to scale things
-# back to only build the stage1 compiler and run a subset of tests, but this
-# didn't end up panning out very well.
-#
-# As a result, we're just using travis to run `make tidy` now. It'll help
-# everyone find out about their trailing spaces early on!
-before_script:
-  - ./configure --llvm-root=path/to/nowhere
+# LLVM takes awhile to check out and otherwise we'll manage the submodules in
+# our configure script, so disable auto submodule management.
+git:
+  submodules: false
+  depth: 1
+
+before_install:
+  - docker build -t rust -f src/etc/Dockerfile src/etc
+
 script:
-  - make tidy
+  - docker run -v `pwd`:/build rust
+    sh -c "
+      ./configure --enable-rustbuild --llvm-root=/usr/lib/llvm-3.7 &&
+      make tidy &&
+      make check -j4
+    "
+
+# Real testing happens on http://buildbot.rust-lang.org/
+#
+# See https://github.com/rust-lang/rust-buildbot
+#     CONTRIBUTING.md#pull-requests
 
 notifications:
   email: false

@@ -8,11 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::slice::Items;
-//~^ ERROR import `Items` conflicts with type in this module
+use std::slice::Iter;
 
-struct Items;
+struct Iter;
+//~^ ERROR a type named `Iter` has already been imported in this module
 
 fn main() {
 }
-

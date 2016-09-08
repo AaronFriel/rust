@@ -13,9 +13,10 @@
 
 // error-pattern: requires `sized` lang_item
 
-#![no_std]
+#![feature(start, no_core)]
+#![no_core]
 
 #[start]
-fn start(argc: int, argv: *const *const u8) -> int {
+fn start(argc: isize, argv: *const *const u8) -> isize {
     0
 }

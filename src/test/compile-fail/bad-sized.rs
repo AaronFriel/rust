@@ -8,16 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-tidy-linelength
-
-use std::cell::RefCell;
-
 trait Trait {}
 
 pub fn main() {
     let x: Vec<Trait + Sized> = Vec::new();
-    //~^ ERROR the trait `core::kinds::Sized` is not implemented
-    //~^^ ERROR the trait `core::kinds::Sized` is not implemented
-    let x: Vec<Box<RefCell<Trait + Sized>>> = Vec::new();
-    //~^ ERROR the trait `core::kinds::Sized` is not implemented
+    //~^ ERROR `Trait + Sized: std::marker::Sized` is not satisfied
+    //~| ERROR the trait `std::marker::Sized` cannot be made into an object
+    //~| ERROR `Trait + Sized: std::marker::Sized` is not satisfied
+    //~| ERROR the trait `std::marker::Sized` cannot be made into an object
 }

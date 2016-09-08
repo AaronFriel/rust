@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use core::atomic::*;
+use core::sync::atomic::*;
+use core::sync::atomic::Ordering::SeqCst;
 
 #[test]
 fn bool_() {
@@ -29,53 +30,55 @@ fn bool_and() {
 
 #[test]
 fn uint_and() {
-    let x = AtomicUint::new(0xf731);
+    let x = AtomicUsize::new(0xf731);
     assert_eq!(x.fetch_and(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 & 0x137f);
 }
 
 #[test]
 fn uint_or() {
-    let x = AtomicUint::new(0xf731);
+    let x = AtomicUsize::new(0xf731);
     assert_eq!(x.fetch_or(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 | 0x137f);
 }
 
 #[test]
 fn uint_xor() {
-    let x = AtomicUint::new(0xf731);
+    let x = AtomicUsize::new(0xf731);
     assert_eq!(x.fetch_xor(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 ^ 0x137f);
 }
 
 #[test]
 fn int_and() {
-    let x = AtomicInt::new(0xf731);
+    let x = AtomicIsize::new(0xf731);
     assert_eq!(x.fetch_and(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 & 0x137f);
 }
 
 #[test]
 fn int_or() {
-    let x = AtomicInt::new(0xf731);
+    let x = AtomicIsize::new(0xf731);
     assert_eq!(x.fetch_or(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 | 0x137f);
 }
 
 #[test]
 fn int_xor() {
-    let x = AtomicInt::new(0xf731);
+    let x = AtomicIsize::new(0xf731);
     assert_eq!(x.fetch_xor(0x137f, SeqCst), 0xf731);
     assert_eq!(x.load(SeqCst), 0xf731 ^ 0x137f);
 }
 
-static S_BOOL : AtomicBool = INIT_ATOMIC_BOOL;
-static S_INT  : AtomicInt  = INIT_ATOMIC_INT;
-static S_UINT : AtomicUint = INIT_ATOMIC_UINT;
+static S_FALSE: AtomicBool = AtomicBool::new(false);
+static S_TRUE: AtomicBool = AtomicBool::new(true);
+static S_INT: AtomicIsize  = AtomicIsize::new(0);
+static S_UINT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn static_init() {
-    assert!(!S_BOOL.load(SeqCst));
+    assert!(!S_FALSE.load(SeqCst));
+    assert!(S_TRUE.load(SeqCst));
     assert!(S_INT.load(SeqCst) == 0);
     assert!(S_UINT.load(SeqCst) == 0);
 }

@@ -10,8 +10,6 @@
 
 // Make sure that globs only bring in public things.
 
-#![feature(globs)]
-
 use bar::*;
 
 mod bar {
@@ -25,7 +23,7 @@ mod bar {
 
     struct C;
 
-    type D = int;
+    type D = isize;
 }
 
 fn foo<T>() {}
@@ -37,10 +35,7 @@ fn main() {
     C; //~ ERROR: unresolved
     import(); //~ ERROR: unresolved
 
-    foo::<A>(); //~ ERROR: undeclared
-    //~^ ERROR: undeclared
-    foo::<C>(); //~ ERROR: undeclared
-    //~^ ERROR: undeclared
-    foo::<D>(); //~ ERROR: undeclared
-    //~^ ERROR: undeclared
+    foo::<A>(); //~ ERROR: not in scope
+    foo::<C>(); //~ ERROR: not in scope
+    foo::<D>(); //~ ERROR: not in scope
 }

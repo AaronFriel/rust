@@ -13,9 +13,11 @@
   message.
  */
 
+use std::sync::mpsc::channel;
+
 pub fn main() {
     let (tx, rx) = channel();
-    tx.send(42i);
+    tx.send(42);
     let r = rx.recv();
-    println!("{}", r);
+    println!("{:?}", r);
 }

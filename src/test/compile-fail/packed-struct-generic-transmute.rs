@@ -13,9 +13,7 @@
 // the error points to the start of the file, not the line with the
 // transmute
 
-// error-pattern: transmute called on types with different size
-
-#![feature(slicing_syntax)]
+// error-pattern: transmute called with differently sized types
 
 use std::mem;
 
@@ -33,7 +31,7 @@ struct Oof<T, S> {
 fn main() {
     let foo = Foo { bar: [1u8, 2, 3, 4, 5], baz: 10i32 };
     unsafe {
-        let oof: Oof<[u8, .. 5], i32> = mem::transmute(foo);
-        println!("{} {}", oof.rab[], oof.zab);
+        let oof: Oof<[u8; 5], i32> = mem::transmute(foo);
+        println!("{:?} {:?}", &oof.rab[..], oof.zab);
     }
 }

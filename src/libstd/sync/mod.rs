@@ -8,36 +8,37 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Useful synchronization primitives
+//! Useful synchronization primitives.
 //!
 //! This module contains useful safe and unsafe synchronization primitives.
 //! Most of the primitives in this module do not provide any sort of locking
 //! and/or blocking at all, but rather provide the necessary tools to build
 //! other types of concurrent primitives.
 
-#![experimental]
+#![stable(feature = "rust1", since = "1.0.0")]
 
+#[stable(feature = "rust1", since = "1.0.0")]
 pub use alloc::arc::{Arc, Weak};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use core::sync::atomic;
 
-pub use self::mutex::{Mutex, MutexGuard, StaticMutex, StaticMutexGuard, MUTEX_INIT};
-pub use self::rwlock::{RWLock, StaticRWLock, RWLOCK_INIT};
-pub use self::rwlock::{RWLockReadGuard, RWLockWriteGuard};
-pub use self::rwlock::{StaticRWLockReadGuard, StaticRWLockWriteGuard};
-pub use self::condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsMutexGuard};
-pub use self::once::{Once, ONCE_INIT};
-pub use self::semaphore::{Semaphore, SemaphoreGuard};
-pub use self::barrier::Barrier;
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::barrier::{Barrier, BarrierWaitResult};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::condvar::{Condvar, WaitTimeoutResult};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::mutex::{Mutex, MutexGuard};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::once::{Once, OnceState, ONCE_INIT};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use sys_common::poison::{PoisonError, TryLockError, TryLockResult, LockResult};
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub use self::future::Future;
-pub use self::task_pool::TaskPool;
+pub mod mpsc;
 
-pub mod atomic;
 mod barrier;
 mod condvar;
-mod future;
 mod mutex;
 mod once;
-mod poison;
 mod rwlock;
-mod semaphore;
-mod task_pool;

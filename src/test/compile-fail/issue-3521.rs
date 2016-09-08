@@ -11,9 +11,12 @@
 fn main() {
     let foo = 100;
 
-    #[deriving(Show)]
+    #[derive(Debug)]
     enum Stuff {
-        Bar = foo //~ ERROR attempt to use a non-constant value in a constant
+        Bar = foo
+        //~^ ERROR attempt to use a non-constant value in a constant
+        //~^^ ERROR constant evaluation error
+        //~| non-constant path in constant expression
     }
 
     println!("{}", Stuff::Bar);

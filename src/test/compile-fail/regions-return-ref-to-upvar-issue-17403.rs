@@ -10,20 +10,11 @@
 
 // Test that closures cannot subvert aliasing restrictions
 
-#![feature(overloaded_calls, unboxed_closures)]
-
 fn main() {
     // Unboxed closure case
     {
-        let mut x = 0u;
-        let mut f = |&mut:| &mut x; //~ ERROR cannot infer
-        let x = f();
-        let y = f();
-    }
-    // Boxed closure case
-    {
-        let mut x = 0u;
-        let f = || &mut x; //~ ERROR cannot infer
+        let mut x = 0;
+        let mut f = || &mut x; //~ ERROR cannot infer
         let x = f();
         let y = f();
     }

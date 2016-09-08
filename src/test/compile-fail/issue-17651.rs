@@ -12,7 +12,7 @@
 // and rejected.
 
 fn main() {
-    (|| box *[0u].as_slice())();
-    //~^ ERROR cannot move out of dereference
-    //~^^ ERROR cannot move a value of type [uint]
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    (|| Box::new(*(&[0][..])))();
+    //~^ ERROR `[{integer}]: std::marker::Sized` is not satisfied
 }

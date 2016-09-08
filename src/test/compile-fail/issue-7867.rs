@@ -14,14 +14,24 @@ mod foo { pub fn bar() {} }
 
 fn main() {
     match (true, false) {
-        A::B => (), //~ ERROR expected `(bool, bool)`, found `A` (expected tuple, found enum A)
+        A::B => (),
+        //~^ ERROR mismatched types
+        //~| expected type `(bool, bool)`
+        //~| found type `A`
+        //~| expected tuple, found enum `A`
         _ => ()
     }
 
-    match &Some(42i) {
-        Some(x) => (), //~ ERROR expected `&core::option::Option<int>`,
-                       //        found `core::option::Option<_>`
-        None => ()     //~ ERROR expected `&core::option::Option<int>`,
-                       //        found `core::option::Option<_>`
+    match &Some(42) {
+        Some(x) => (),
+        //~^ ERROR mismatched types
+        //~| expected type `&std::option::Option<{integer}>`
+        //~| found type `std::option::Option<_>`
+        //~| expected reference, found enum `std::option::Option`
+        None => ()
+        //~^ ERROR mismatched types
+        //~| expected type `&std::option::Option<{integer}>`
+        //~| found type `std::option::Option<_>`
+        //~| expected reference, found enum `std::option::Option`
     }
 }

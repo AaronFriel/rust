@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 //
-// ignore-lexer-test FIXME #15679
 
 fn foo<
     'β, //~ ERROR non-ascii idents are not fully supported
@@ -16,7 +15,7 @@ fn foo<
 >() {}
 
 struct X {
-    δ: uint //~ ERROR non-ascii idents are not fully supported
+    δ: usize //~ ERROR non-ascii idents are not fully supported
 }
 
 pub fn main() {

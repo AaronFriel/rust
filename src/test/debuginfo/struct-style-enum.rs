@@ -9,7 +9,6 @@
 // except according to those terms.
 
 // ignore-tidy-linelength
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -49,6 +48,8 @@
 // lldb-check:[...]$3 = TheOnlyCase { a: -1 }
 
 #![allow(unused_variables)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 use self::Regular::{Case1, Case2, Case3};
 use self::Univariant::TheOnlyCase;
@@ -68,7 +69,7 @@ enum Univariant {
 
 fn main() {
 
-    // In order to avoid endianess trouble all of the following test values consist of a single
+    // In order to avoid endianness trouble all of the following test values consist of a single
     // repeated byte. This way each interpretation of the union should look the same, no matter if
     // this is a big or little endian machine.
 

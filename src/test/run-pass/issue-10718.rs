@@ -8,13 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
 fn f<F:FnOnce()>(p: F) {
     p();
 }
 
 pub fn main() {
-    let p = |:| ();
+    let p = || ();
     f(p);
 }

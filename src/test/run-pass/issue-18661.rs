@@ -11,16 +11,16 @@
 // Test that param substitutions from the correct environment are
 // used when translating unboxed closure calls.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
 pub fn inside<F: Fn()>(c: F) {
-    c.call(());
+    c();
 }
 
 // Use different number of type parameters and closure type to trigger
 // an obvious ICE when param environments are mixed up
 pub fn outside<A,B>() {
-    inside(|&:| {});
+    inside(|| {});
 }
 
 fn main() {

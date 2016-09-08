@@ -14,7 +14,7 @@
 //! (bundled into the rust runtime). This module self-contains the C bindings
 //! and necessary legwork to render markdown, and exposes all of the
 //! functionality through a unit-struct, `Markdown`, which has an implementation
-//! of `fmt::Show`. Example usage:
+//! of `fmt::Display`. Example usage:
 //!
 //! ```rust,ignore
 //! use rustdoc::html::markdown::Markdown;
@@ -24,23 +24,26 @@
 //! // ... something using html
 //! ```
 
-#![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
 use libc;
+use rustc::session::config::get_unstable_features_setting;
 use std::ascii::AsciiExt;
-use std::cell::{RefCell, Cell};
+use std::cell::RefCell;
+use std::default::Default;
+use std::ffi::CString;
 use std::fmt;
 use std::slice;
 use std::str;
-use std::collections::HashMap;
+use syntax::feature_gate::UnstableFeatures;
 
+use html::render::derive_id;
 use html::toc::TocBuilder;
 use html::highlight;
 use html::escape::Escape;
 use test;
 
-/// A unit struct which has the `fmt::Show` trait implemented. When
+/// A unit struct which has the `fmt::Display` trait implemented. When
 /// formatted, this struct will emit the HTML corresponding to the rendered
 /// version of the contained markdown string.
 pub struct Markdown<'a>(pub &'a str);
@@ -49,7 +52,7 @@ pub struct Markdown<'a>(pub &'a str);
 pub struct MarkdownWithToc<'a>(pub &'a str);
 
 const DEF_OUNIT: libc::size_t = 64;
-const HOEDOWN_EXT_NO_INTRA_EMPHASIS: libc::c_uint = 1 << 10;
+const HOEDOWN_EXT_NO_INTRA_EMPHASIS: libc::c_uint = 1 << 11;
 const HOEDOWN_EXT_TABLES: libc::c_uint = 1 << 0;
 const HOEDOWN_EXT_FENCED_CODE: libc::c_uint = 1 << 1;
 const HOEDOWN_EXT_AUTOLINK: libc::c_uint = 1 << 3;
@@ -63,20 +66,63 @@ const HOEDOWN_EXTENSIONS: libc::c_uint =
     HOEDOWN_EXT_STRIKETHROUGH | HOEDOWN_EXT_SUPERSCRIPT |
     HOEDOWN_EXT_FOOTNOTES;
 
-type hoedown_document = libc::c_void;  // this is opaque to us
+enum hoedown_document {}
+
+type blockcodefn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                 *const hoedown_buffer, *const hoedown_renderer_data);
+
+type blockquotefn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                  *const hoedown_renderer_data);
+
+type headerfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                              libc::c_int, *const hoedown_renderer_data);
+
+type blockhtmlfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                 *const hoedown_renderer_data);
+
+type codespanfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                *const hoedown_renderer_data) -> libc::c_int;
+
+type linkfn = extern "C" fn (*mut hoedown_buffer, *const hoedown_buffer,
+                             *const hoedown_buffer, *const hoedown_buffer,
+                             *const hoedown_renderer_data) -> libc::c_int;
+
+type entityfn = extern "C" fn (*mut hoedown_buffer, *const hoedown_buffer,
+                               *const hoedown_renderer_data);
+
+type normaltextfn = extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
+                                  *const hoedown_renderer_data);
+
+#[repr(C)]
+struct hoedown_renderer_data {
+    opaque: *mut libc::c_void,
+}
 
 #[repr(C)]
 struct hoedown_renderer {
-    opaque: *mut hoedown_html_renderer_state,
-    blockcode: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
-                                    *const hoedown_buffer, *mut libc::c_void)>,
-    blockquote: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
-                                     *mut libc::c_void)>,
-    blockhtml: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
-                                    *mut libc::c_void)>,
-    header: Option<extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
-                                 libc::c_int, *mut libc::c_void)>,
-    other: [libc::size_t, ..28],
+    opaque: *mut libc::c_void,
+
+    blockcode: Option<blockcodefn>,
+    blockquote: Option<blockquotefn>,
+    header: Option<headerfn>,
+
+    other_block_level_callbacks: [libc::size_t; 11],
+
+    blockhtml: Option<blockhtmlfn>,
+
+    /* span level callbacks - NULL or return 0 prints the span verbatim */
+    autolink: libc::size_t, // unused
+    codespan: Option<codespanfn>,
+    other_span_level_callbacks_1: [libc::size_t; 7],
+    link: Option<linkfn>,
+    other_span_level_callbacks_2: [libc::size_t; 6],
+
+    /* low level callbacks - NULL copies input directly into the output */
+    entity: Option<entityfn>,
+    normal_text: Option<normaltextfn>,
+
+    /* header and footer */
+    other_callbacks: [libc::size_t; 2],
 }
 
 #[repr(C)]
@@ -86,7 +132,7 @@ struct hoedown_html_renderer_state {
     flags: libc::c_uint,
     link_attributes: Option<extern "C" fn(*mut hoedown_buffer,
                                           *const hoedown_buffer,
-                                          *mut libc::c_void)>,
+                                          *const hoedown_renderer_data)>,
 }
 
 #[repr(C)]
@@ -99,7 +145,7 @@ struct html_toc_data {
 
 struct MyOpaque {
     dfltblk: extern "C" fn(*mut hoedown_buffer, *const hoedown_buffer,
-                           *const hoedown_buffer, *mut libc::c_void),
+                           *const hoedown_buffer, *const hoedown_renderer_data),
     toc_builder: Option<TocBuilder>,
 }
 
@@ -113,13 +159,16 @@ struct hoedown_buffer {
 
 // hoedown FFI
 #[link(name = "hoedown", kind = "static")]
+#[cfg(not(cargobuild))]
+extern {}
+
 extern {
     fn hoedown_html_renderer_new(render_flags: libc::c_uint,
                                  nesting_level: libc::c_int)
         -> *mut hoedown_renderer;
     fn hoedown_html_renderer_free(renderer: *mut hoedown_renderer);
 
-    fn hoedown_document_new(rndr: *mut hoedown_renderer,
+    fn hoedown_document_new(rndr: *const hoedown_renderer,
                             extensions: libc::c_uint,
                             max_nesting: libc::size_t) -> *mut hoedown_document;
     fn hoedown_document_render(doc: *mut hoedown_document,
@@ -129,9 +178,18 @@ extern {
     fn hoedown_document_free(md: *mut hoedown_document);
 
     fn hoedown_buffer_new(unit: libc::size_t) -> *mut hoedown_buffer;
+    fn hoedown_buffer_put(b: *mut hoedown_buffer, c: *const libc::c_char,
+                          n: libc::size_t);
     fn hoedown_buffer_puts(b: *mut hoedown_buffer, c: *const libc::c_char);
     fn hoedown_buffer_free(b: *mut hoedown_buffer);
 
+}
+
+// hoedown_buffer helpers
+impl hoedown_buffer {
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.data, self.size as usize) }
+    }
 }
 
 /// Returns Some(code) if `s` is a line that should be stripped from
@@ -140,43 +198,46 @@ extern {
 /// left as-is.)
 fn stripped_filtered_line<'a>(s: &'a str) -> Option<&'a str> {
     let trimmed = s.trim();
-    if trimmed.starts_with("# ") {
-        Some(trimmed.slice_from(2))
+    if trimmed == "#" {
+        Some("")
+    } else if trimmed.starts_with("# ") {
+        Some(&trimmed[2..])
     } else {
         None
     }
 }
 
-thread_local!(static USED_HEADER_MAP: RefCell<HashMap<String, uint>> = {
-    RefCell::new(HashMap::new())
-})
-thread_local!(static TEST_IDX: Cell<uint> = Cell::new(0))
+/// Returns a new string with all consecutive whitespace collapsed into
+/// single spaces.
+///
+/// Any leading or trailing whitespace will be trimmed.
+fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 thread_local!(pub static PLAYGROUND_KRATE: RefCell<Option<Option<String>>> = {
     RefCell::new(None)
-})
+});
 
 pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
     extern fn block(ob: *mut hoedown_buffer, orig_text: *const hoedown_buffer,
-                    lang: *const hoedown_buffer, opaque: *mut libc::c_void) {
+                    lang: *const hoedown_buffer, data: *const hoedown_renderer_data) {
         unsafe {
             if orig_text.is_null() { return }
 
-            let opaque = opaque as *mut hoedown_html_renderer_state;
+            let opaque = (*data).opaque as *mut hoedown_html_renderer_state;
             let my_opaque: &MyOpaque = &*((*opaque).opaque as *const MyOpaque);
-            let text = slice::from_raw_buf(&(*orig_text).data,
-                                           (*orig_text).size as uint);
+            let text = (*orig_text).as_bytes();
             let origtext = str::from_utf8(text).unwrap();
-            debug!("docblock: ==============\n{}\n=======", text);
+            debug!("docblock: ==============\n{:?}\n=======", text);
             let rendered = if lang.is_null() {
                 false
             } else {
-                let rlang = slice::from_raw_buf(&(*lang).data,
-                                                (*lang).size as uint);
+                let rlang = (*lang).as_bytes();
                 let rlang = str::from_utf8(rlang).unwrap();
-                if LangString::parse(rlang).notrust {
+                if !LangString::parse(rlang).rust {
                     (my_opaque.dfltblk)(ob, orig_text, lang,
-                                        opaque as *mut libc::c_void);
+                                        opaque as *const hoedown_renderer_data);
                     true
                 } else {
                     false
@@ -186,92 +247,107 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
             let lines = origtext.lines().filter(|l| {
                 stripped_filtered_line(*l).is_none()
             });
-            let text = lines.collect::<Vec<&str>>().connect("\n");
+            let text = lines.collect::<Vec<&str>>().join("\n");
             if rendered { return }
             PLAYGROUND_KRATE.with(|krate| {
-                let mut s = String::new();
-                let id = krate.borrow().as_ref().map(|krate| {
-                    let idx = TEST_IDX.with(|slot| {
-                        let i = slot.get();
-                        slot.set(i + 1);
-                        i
-                    });
-
+                // insert newline to clearly separate it from the
+                // previous block so we can shorten the html output
+                let mut s = String::from("\n");
+                krate.borrow().as_ref().map(|krate| {
                     let test = origtext.lines().map(|l| {
                         stripped_filtered_line(l).unwrap_or(l)
-                    }).collect::<Vec<&str>>().connect("\n");
-                    let krate = krate.as_ref().map(|s| s.as_slice());
-                    let test = test::maketest(test.as_slice(), krate, false, false);
-                    s.push_str(format!("<span id='rust-example-raw-{}' \
-                                         class='rusttest'>{}</span>",
-                                       idx, Escape(test.as_slice())).as_slice());
-                    format!("rust-example-rendered-{}", idx)
+                    }).collect::<Vec<&str>>().join("\n");
+                    let krate = krate.as_ref().map(|s| &**s);
+                    let test = test::maketest(&test, krate, false,
+                                              &Default::default());
+                    s.push_str(&format!("<span class='rusttest'>{}</span>", Escape(&test)));
                 });
-                let id = id.as_ref().map(|a| a.as_slice());
-                s.push_str(highlight::highlight(text.as_slice(), None, id)
-                                     .as_slice());
-                let output = s.to_c_str();
+                s.push_str(&highlight::render_with_highlighting(&text,
+                                                                Some("rust-example-rendered"),
+                                                                None));
+                let output = CString::new(s).unwrap();
                 hoedown_buffer_puts(ob, output.as_ptr());
             })
         }
     }
 
     extern fn header(ob: *mut hoedown_buffer, text: *const hoedown_buffer,
-                     level: libc::c_int, opaque: *mut libc::c_void) {
+                     level: libc::c_int, data: *const hoedown_renderer_data) {
         // hoedown does this, we may as well too
-        "\n".with_c_str(|p| unsafe { hoedown_buffer_puts(ob, p) });
+        unsafe { hoedown_buffer_puts(ob, "\n\0".as_ptr() as *const _); }
 
         // Extract the text provided
         let s = if text.is_null() {
-            "".to_string()
+            "".to_owned()
         } else {
-            unsafe {
-                String::from_raw_buf_len((*text).data, (*text).size as uint)
-            }
+            let s = unsafe { (*text).as_bytes() };
+            str::from_utf8(&s).unwrap().to_owned()
         };
 
-        // Transform the contents of the header into a hyphenated string
-        let id = s.words().map(|s| s.to_ascii_lower())
-            .collect::<Vec<String>>().connect("-");
-
+        // Discard '<em>', '<code>' tags and some escaped characters,
+        // transform the contents of the header into a hyphenated string
+        // without non-alphanumeric characters other than '-' and '_'.
+        //
         // This is a terrible hack working around how hoedown gives us rendered
         // html for text rather than the raw text.
+        let mut id = s.clone();
+        let repl_sub = vec!["<em>", "</em>", "<code>", "</code>",
+                            "<strong>", "</strong>",
+                            "&lt;", "&gt;", "&amp;", "&#39;", "&quot;"];
+        for sub in repl_sub {
+            id = id.replace(sub, "");
+        }
+        let id = id.chars().filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                if c.is_ascii() {
+                    Some(c.to_ascii_lowercase())
+                } else {
+                    Some(c)
+                }
+            } else if c.is_whitespace() && c.is_ascii() {
+                Some('-')
+            } else {
+                None
+            }
+        }).collect::<String>();
 
-        let opaque = opaque as *mut hoedown_html_renderer_state;
+        let opaque = unsafe { (*data).opaque as *mut hoedown_html_renderer_state };
         let opaque = unsafe { &mut *((*opaque).opaque as *mut MyOpaque) };
 
-        // Make sure our hyphenated ID is unique for this page
-        let id = USED_HEADER_MAP.with(|map| {
-            let id = id.replace("<code>", "").replace("</code>", "").to_string();
-            let id = match map.borrow_mut().get_mut(&id) {
-                None => id,
-                Some(a) => { *a += 1; format!("{}-{}", id, *a - 1) }
-            };
-            map.borrow_mut().insert(id.clone(), 1);
-            id
+        let id = derive_id(id);
+
+        let sec = opaque.toc_builder.as_mut().map_or("".to_owned(), |builder| {
+            format!("{} ", builder.push(level as u32, s.clone(), id.clone()))
         });
 
-        let sec = match opaque.toc_builder {
-            Some(ref mut builder) => {
-                builder.push(level as u32, s.clone(), id.clone())
-            }
-            None => {""}
-        };
-
         // Render the HTML
-        let text = format!(r##"<h{lvl} id="{id}" class='section-header'><a
-                           href="#{id}">{sec}{}</a></h{lvl}>"##,
-                           s, lvl = level, id = id,
-                           sec = if sec.len() == 0 {
-                               sec.to_string()
-                           } else {
-                               format!("{} ", sec)
-                           });
+        let text = format!("<h{lvl} id='{id}' class='section-header'>\
+                           <a href='#{id}'>{sec}{}</a></h{lvl}>",
+                           s, lvl = level, id = id, sec = sec);
 
-        text.with_c_str(|p| unsafe { hoedown_buffer_puts(ob, p) });
+        let text = CString::new(text).unwrap();
+        unsafe { hoedown_buffer_puts(ob, text.as_ptr()) }
     }
 
-    reset_headers();
+    extern fn codespan(
+        ob: *mut hoedown_buffer,
+        text: *const hoedown_buffer,
+        _: *const hoedown_renderer_data,
+    ) -> libc::c_int {
+        let content = if text.is_null() {
+            "".to_owned()
+        } else {
+            let bytes = unsafe { (*text).as_bytes() };
+            let s = str::from_utf8(bytes).unwrap();
+            collapse_whitespace(s)
+        };
+
+        let content = format!("<code>{}</code>", Escape(&content));
+        let element = CString::new(content).unwrap();
+        unsafe { hoedown_buffer_puts(ob, element.as_ptr()); }
+        // Return anything except 0, which would mean "also print the code span verbatim".
+        1
+    }
 
     unsafe {
         let ob = hoedown_buffer_new(DEF_OUNIT);
@@ -280,9 +356,11 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
             dfltblk: (*renderer).blockcode.unwrap(),
             toc_builder: if print_toc {Some(TocBuilder::new())} else {None}
         };
-        (*(*renderer).opaque).opaque = &mut opaque as *mut _ as *mut libc::c_void;
+        (*((*renderer).opaque as *mut hoedown_html_renderer_state)).opaque
+                = &mut opaque as *mut _ as *mut libc::c_void;
         (*renderer).blockcode = Some(block);
         (*renderer).header = Some(header);
+        (*renderer).codespan = Some(codespan);
 
         let document = hoedown_document_new(renderer, HOEDOWN_EXTENSIONS, 16);
         hoedown_document_render(document, ob, s.as_ptr(),
@@ -291,14 +369,13 @@ pub fn render(w: &mut fmt::Formatter, s: &str, print_toc: bool) -> fmt::Result {
 
         hoedown_html_renderer_free(renderer);
 
-        let mut ret = match opaque.toc_builder {
-            Some(b) => write!(w, "<nav id=\"TOC\">{}</nav>", b.into_toc()),
-            None => Ok(())
-        };
+        let mut ret = opaque.toc_builder.map_or(Ok(()), |builder| {
+            write!(w, "<nav id=\"TOC\">{}</nav>", builder.into_toc())
+        });
 
         if ret.is_ok() {
-            let buf = slice::from_raw_buf(&(*ob).data, (*ob).size as uint);
-            ret = w.write(buf);
+            let buf = (*ob).as_bytes();
+            ret = w.write_str(str::from_utf8(buf).unwrap());
         }
         hoedown_buffer_free(ob);
         ret
@@ -309,42 +386,42 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
     extern fn block(_ob: *mut hoedown_buffer,
                     text: *const hoedown_buffer,
                     lang: *const hoedown_buffer,
-                    opaque: *mut libc::c_void) {
+                    data: *const hoedown_renderer_data) {
         unsafe {
             if text.is_null() { return }
             let block_info = if lang.is_null() {
                 LangString::all_false()
             } else {
-                let lang = slice::from_raw_buf(&(*lang).data,
-                                               (*lang).size as uint);
+                let lang = (*lang).as_bytes();
                 let s = str::from_utf8(lang).unwrap();
                 LangString::parse(s)
             };
-            if block_info.notrust { return }
-            let text = slice::from_raw_buf(&(*text).data, (*text).size as uint);
-            let opaque = opaque as *mut hoedown_html_renderer_state;
+            if !block_info.rust { return }
+            let text = (*text).as_bytes();
+            let opaque = (*data).opaque as *mut hoedown_html_renderer_state;
             let tests = &mut *((*opaque).opaque as *mut ::test::Collector);
             let text = str::from_utf8(text).unwrap();
             let lines = text.lines().map(|l| {
                 stripped_filtered_line(l).unwrap_or(l)
             });
-            let text = lines.collect::<Vec<&str>>().connect("\n");
-            tests.add_test(text.to_string(),
-                           block_info.should_fail, block_info.no_run,
-                           block_info.ignore, block_info.test_harness);
+            let text = lines.collect::<Vec<&str>>().join("\n");
+            tests.add_test(text.to_owned(),
+                           block_info.should_panic, block_info.no_run,
+                           block_info.ignore, block_info.test_harness,
+                           block_info.compile_fail, block_info.error_codes);
         }
     }
 
     extern fn header(_ob: *mut hoedown_buffer,
                      text: *const hoedown_buffer,
-                     level: libc::c_int, opaque: *mut libc::c_void) {
+                     level: libc::c_int, data: *const hoedown_renderer_data) {
         unsafe {
-            let opaque = opaque as *mut hoedown_html_renderer_state;
+            let opaque = (*data).opaque as *mut hoedown_html_renderer_state;
             let tests = &mut *((*opaque).opaque as *mut ::test::Collector);
             if text.is_null() {
                 tests.register_header("", level as u32);
             } else {
-                let text = slice::from_raw_buf(&(*text).data, (*text).size as uint);
+                let text = (*text).as_bytes();
                 let text = str::from_utf8(text).unwrap();
                 tests.register_header(text, level as u32);
             }
@@ -356,7 +433,8 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
         let renderer = hoedown_html_renderer_new(0, 0);
         (*renderer).blockcode = Some(block);
         (*renderer).header = Some(header);
-        (*(*renderer).opaque).opaque = tests as *mut _ as *mut libc::c_void;
+        (*((*renderer).opaque as *mut hoedown_html_renderer_state)).opaque
+                = tests as *mut _ as *mut libc::c_void;
 
         let document = hoedown_document_new(renderer, HOEDOWN_EXTENSIONS, 16);
         hoedown_document_render(document, ob, doc.as_ptr(),
@@ -368,23 +446,27 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector) {
     }
 }
 
-#[deriving(Eq, PartialEq, Clone, Show)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 struct LangString {
-    should_fail: bool,
+    should_panic: bool,
     no_run: bool,
     ignore: bool,
-    notrust: bool,
+    rust: bool,
     test_harness: bool,
+    compile_fail: bool,
+    error_codes: Vec<String>,
 }
 
 impl LangString {
     fn all_false() -> LangString {
         LangString {
-            should_fail: false,
+            should_panic: false,
             no_run: false,
             ignore: false,
-            notrust: false,
+            rust: true,  // NB This used to be `notrust = false`
             test_harness: false,
+            compile_fail: false,
+            error_codes: Vec::new(),
         }
     }
 
@@ -392,93 +474,220 @@ impl LangString {
         let mut seen_rust_tags = false;
         let mut seen_other_tags = false;
         let mut data = LangString::all_false();
+        let mut allow_compile_fail = false;
+        let mut allow_error_code_check = false;
+        match get_unstable_features_setting() {
+            UnstableFeatures::Allow | UnstableFeatures::Cheat => {
+                allow_compile_fail = true;
+                allow_error_code_check = true;
+            }
+            _ => {},
+        };
 
-        let mut tokens = string.split(|&: c: char|
+        let tokens = string.split(|c: char|
             !(c == '_' || c == '-' || c.is_alphanumeric())
         );
 
         for token in tokens {
             match token {
                 "" => {},
-                "should_fail" => { data.should_fail = true; seen_rust_tags = true; },
+                "should_panic" => { data.should_panic = true; seen_rust_tags = true; },
                 "no_run" => { data.no_run = true; seen_rust_tags = true; },
                 "ignore" => { data.ignore = true; seen_rust_tags = true; },
-                "notrust" => { data.notrust = true; seen_rust_tags = true; },
-                "rust" => { data.notrust = false; seen_rust_tags = true; },
-                "test_harness" => { data.test_harness = true; seen_rust_tags = true; }
+                "rust" => { data.rust = true; seen_rust_tags = true; },
+                "test_harness" => { data.test_harness = true; seen_rust_tags = true; },
+                "compile_fail" if allow_compile_fail => {
+                    data.compile_fail = true;
+                    seen_rust_tags = true;
+                    data.no_run = true;
+                }
+                x if allow_error_code_check && x.starts_with("E") && x.len() == 5 => {
+                    if let Ok(_) = x[1..].parse::<u32>() {
+                        data.error_codes.push(x.to_owned());
+                        seen_rust_tags = true;
+                    } else {
+                        seen_other_tags = true;
+                    }
+                }
                 _ => { seen_other_tags = true }
             }
         }
 
-        data.notrust |= seen_other_tags && !seen_rust_tags;
+        data.rust &= !seen_other_tags || seen_rust_tags;
 
         data
     }
 }
 
-/// By default this markdown renderer generates anchors for each header in the
-/// rendered document. The anchor name is the contents of the header separated
-/// by hyphens, and a task-local map is used to disambiguate among duplicate
-/// headers (numbers are appended).
-///
-/// This method will reset the local table for these headers. This is typically
-/// used at the beginning of rendering an entire HTML page to reset from the
-/// previous state (if any).
-pub fn reset_headers() {
-    USED_HEADER_MAP.with(|s| s.borrow_mut().clear());
-    TEST_IDX.with(|s| s.set(0));
-}
-
-impl<'a> fmt::Show for Markdown<'a> {
+impl<'a> fmt::Display for Markdown<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let Markdown(md) = *self;
         // This is actually common enough to special-case
-        if md.len() == 0 { return Ok(()) }
-        render(fmt, md.as_slice(), false)
+        if md.is_empty() { return Ok(()) }
+        render(fmt, md, false)
     }
 }
 
-impl<'a> fmt::Show for MarkdownWithToc<'a> {
+impl<'a> fmt::Display for MarkdownWithToc<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let MarkdownWithToc(md) = *self;
-        render(fmt, md.as_slice(), true)
+        render(fmt, md, true)
+    }
+}
+
+pub fn plain_summary_line(md: &str) -> String {
+    extern fn link(_ob: *mut hoedown_buffer,
+                       _link: *const hoedown_buffer,
+                       _title: *const hoedown_buffer,
+                       content: *const hoedown_buffer,
+                       data: *const hoedown_renderer_data) -> libc::c_int
+    {
+        unsafe {
+            if !content.is_null() && (*content).size > 0 {
+                let ob = (*data).opaque as *mut hoedown_buffer;
+                hoedown_buffer_put(ob, (*content).data as *const libc::c_char,
+                                   (*content).size);
+            }
+        }
+        1
+    }
+
+    extern fn normal_text(_ob: *mut hoedown_buffer,
+                              text: *const hoedown_buffer,
+                              data: *const hoedown_renderer_data)
+    {
+        unsafe {
+            let ob = (*data).opaque as *mut hoedown_buffer;
+            hoedown_buffer_put(ob, (*text).data as *const libc::c_char,
+                               (*text).size);
+        }
+    }
+
+    unsafe {
+        let ob = hoedown_buffer_new(DEF_OUNIT);
+        let mut plain_renderer: hoedown_renderer = ::std::mem::zeroed();
+        let renderer: *mut hoedown_renderer = &mut plain_renderer;
+        (*renderer).opaque = ob as *mut libc::c_void;
+        (*renderer).link = Some(link);
+        (*renderer).normal_text = Some(normal_text);
+
+        let document = hoedown_document_new(renderer, HOEDOWN_EXTENSIONS, 16);
+        hoedown_document_render(document, ob, md.as_ptr(),
+                                md.len() as libc::size_t);
+        hoedown_document_free(document);
+        let plain_slice = (*ob).as_bytes();
+        let plain = str::from_utf8(plain_slice).unwrap_or("").to_owned();
+        hoedown_buffer_free(ob);
+        plain
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{LangString, Markdown};
+    use super::plain_summary_line;
+    use html::render::reset_ids;
 
     #[test]
     fn test_lang_string_parse() {
         fn t(s: &str,
-             should_fail: bool, no_run: bool, ignore: bool, notrust: bool, test_harness: bool) {
+            should_panic: bool, no_run: bool, ignore: bool, rust: bool, test_harness: bool,
+            compile_fail: bool, error_codes: Vec<String>) {
             assert_eq!(LangString::parse(s), LangString {
-                should_fail: should_fail,
+                should_panic: should_panic,
                 no_run: no_run,
                 ignore: ignore,
-                notrust: notrust,
+                rust: rust,
                 test_harness: test_harness,
+                compile_fail: compile_fail,
+                error_codes: error_codes,
             })
         }
 
-        t("", false,false,false,false,false);
-        t("rust", false,false,false,false,false);
-        t("sh", false,false,false,true,false);
-        t("notrust", false,false,false,true,false);
-        t("ignore", false,false,true,false,false);
-        t("should_fail", true,false,false,false,false);
-        t("no_run", false,true,false,false,false);
-        t("test_harness", false,false,false,false,true);
-        t("{.no_run .example}", false,true,false,false,false);
-        t("{.sh .should_fail}", true,false,false,false,false);
-        t("{.example .rust}", false,false,false,false,false);
-        t("{.test_harness .rust}", false,false,false,false,true);
+        // marker                | should_panic| no_run| ignore| rust | test_harness| compile_fail
+        //                       | error_codes
+        t("",                      false,        false,  false,  true,  false, false, Vec::new());
+        t("rust",                  false,        false,  false,  true,  false, false, Vec::new());
+        t("sh",                    false,        false,  false,  false, false, false, Vec::new());
+        t("ignore",                false,        false,  true,   true,  false, false, Vec::new());
+        t("should_panic",          true,         false,  false,  true,  false, false, Vec::new());
+        t("no_run",                false,        true,   false,  true,  false, false, Vec::new());
+        t("test_harness",          false,        false,  false,  true,  true,  false, Vec::new());
+        t("compile_fail",          false,        true,   false,  true,  false, true,  Vec::new());
+        t("E0450",                 false,        false,  false,  true,  false, false,
+                                   vec!("E0450".to_owned()));
+        t("{.no_run .example}",    false,        true,   false,  true,  false, false, Vec::new());
+        t("{.sh .should_panic}",   true,         false,  false,  true,  false, false, Vec::new());
+        t("{.example .rust}",      false,        false,  false,  true,  false, false, Vec::new());
+        t("{.test_harness .rust}", false,        false,  false,  true,  true,  false, Vec::new());
     }
 
     #[test]
     fn issue_17736() {
         let markdown = "# title";
-        format!("{}", Markdown(markdown.as_slice()));
+        format!("{}", Markdown(markdown));
+        reset_ids(true);
+    }
+
+    #[test]
+    fn test_header() {
+        fn t(input: &str, expect: &str) {
+            let output = format!("{}", Markdown(input));
+            assert_eq!(output, expect);
+            reset_ids(true);
+        }
+
+        t("# Foo bar", "\n<h1 id='foo-bar' class='section-header'>\
+          <a href='#foo-bar'>Foo bar</a></h1>");
+        t("## Foo-bar_baz qux", "\n<h2 id='foo-bar_baz-qux' class=\'section-\
+          header'><a href='#foo-bar_baz-qux'>Foo-bar_baz qux</a></h2>");
+        t("### **Foo** *bar* baz!?!& -_qux_-%",
+          "\n<h3 id='foo-bar-baz--_qux_-' class='section-header'>\
+          <a href='#foo-bar-baz--_qux_-'><strong>Foo</strong> \
+          <em>bar</em> baz!?!&amp; -_qux_-%</a></h3>");
+        t("####**Foo?** & \\*bar?!*  _`baz`_ ❤ #qux",
+          "\n<h4 id='foo--bar--baz--qux' class='section-header'>\
+          <a href='#foo--bar--baz--qux'><strong>Foo?</strong> &amp; *bar?!*  \
+          <em><code>baz</code></em> ❤ #qux</a></h4>");
+    }
+
+    #[test]
+    fn test_header_ids_multiple_blocks() {
+        fn t(input: &str, expect: &str) {
+            let output = format!("{}", Markdown(input));
+            assert_eq!(output, expect);
+        }
+
+        let test = || {
+            t("# Example", "\n<h1 id='example' class='section-header'>\
+              <a href='#example'>Example</a></h1>");
+            t("# Panics", "\n<h1 id='panics' class='section-header'>\
+              <a href='#panics'>Panics</a></h1>");
+            t("# Example", "\n<h1 id='example-1' class='section-header'>\
+              <a href='#example-1'>Example</a></h1>");
+            t("# Main", "\n<h1 id='main-1' class='section-header'>\
+              <a href='#main-1'>Main</a></h1>");
+            t("# Example", "\n<h1 id='example-2' class='section-header'>\
+              <a href='#example-2'>Example</a></h1>");
+            t("# Panics", "\n<h1 id='panics-1' class='section-header'>\
+              <a href='#panics-1'>Panics</a></h1>");
+        };
+        test();
+        reset_ids(true);
+        test();
+    }
+
+    #[test]
+    fn test_plain_summary_line() {
+        fn t(input: &str, expect: &str) {
+            let output = plain_summary_line(input);
+            assert_eq!(output, expect);
+        }
+
+        t("hello [Rust](https://www.rust-lang.org) :)", "hello Rust :)");
+        t("code `let x = i32;` ...", "code `let x = i32;` ...");
+        t("type `Type<'static>` ...", "type `Type<'static>` ...");
+        t("# top header", "top header");
+        t("## header", "header");
     }
 }

@@ -13,7 +13,7 @@ use std::rc::Rc;
 fn bar<T: Send>(_: T) {}
 
 fn main() {
-    let x = Rc::new(5i);
+    let x = Rc::new(5);
     bar(x);
-    //~^ ERROR `core::kinds::Send` is not implemented
+    //~^ ERROR `std::rc::Rc<{integer}>: std::marker::Send` is not satisfied
 }

@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // ignore-lldb
 
 // compile-flags:-g
@@ -24,20 +23,25 @@
 // gdb-command:continue
 
 #![allow(unused_variables)]
+#![feature(no_debug)]
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
+#[inline(never)]
+fn id<T>(x: T) -> T {x}
 
 fn function_with_debuginfo() {
-    let abc = 10u;
-    return (); // #break
+    let abc = 10_usize;
+    id(abc); // #break
 }
 
 #[no_debug]
 fn function_without_debuginfo() {
     let abc = -57i32;
-    return (); // #break
+    id(abc); // #break
 }
 
 fn main() {
     function_without_debuginfo();
     function_with_debuginfo();
 }
-

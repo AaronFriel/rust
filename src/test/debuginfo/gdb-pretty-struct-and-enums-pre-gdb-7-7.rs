@@ -8,16 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This test uses only GDB Python API features which should be available in
-// older versions of GDB too. A more extensive test can be found in
-// gdb-pretty-struct-and-enums.rs
-
+// ignore-bitrig
+// ignore-solaris
 // ignore-windows failing on win32 bot
+// ignore-freebsd: gdb package too new
 // ignore-tidy-linelength
 // ignore-lldb
 // ignore-android: FIXME(#10381)
 // compile-flags:-g
-// gdb-use-pretty-printer
 
 // gdb-command: run
 
@@ -36,8 +34,10 @@
 // gdb-command: print c_style_enum3
 // gdb-check:$5 = CStyleEnumVar3
 
+#![allow(dead_code, unused_variables)]
+
 struct RegularStruct {
-    the_first_field: int,
+    the_first_field: isize,
     the_second_field: f64,
     the_third_field: bool,
 }

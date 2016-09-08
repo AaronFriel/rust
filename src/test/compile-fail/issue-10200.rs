@@ -9,11 +9,11 @@
 // except according to those terms.
 
 struct Foo(bool);
-fn foo(_: uint) -> Foo { Foo(false) }
+fn foo(_: usize) -> Foo { Foo(false) }
 
 fn main() {
     match Foo(true) {
-        foo(x) //~ ERROR `foo` is not an enum variant, struct or const
+        foo(x) //~ ERROR expected variant or struct, found function `foo`
         => ()
     }
 }

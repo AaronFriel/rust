@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unboxed_closures, overloaded_calls)]
-
 use std::ops::FnMut;
 
 fn main() {
@@ -17,7 +15,6 @@ fn main() {
     {
         let c = 1;
         let c_ref = &c; //~ ERROR `c` does not live long enough
-        f = move |&mut: a: int, b: int| { a + b + *c_ref };
+        f = move |a: isize, b: isize| { a + b + *c_ref };
     }
 }
-

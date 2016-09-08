@@ -12,13 +12,13 @@
 
 trait Foo<'tcx>
 {
-    fn foo(&'tcx self) -> &'tcx int;
+    fn foo(&'tcx self) -> &'tcx isize;
 }
 
 trait Bar<'ccx>
     : for<'tcx> Foo<'tcx>
 {
-    fn bar(&'ccx self) -> &'ccx int;
+    fn bar(&'ccx self) -> &'ccx isize;
 }
 
 trait Baz
@@ -54,7 +54,7 @@ fn want_qux<B>(b: &B)
     where B : Qux
 {
     want_foo_for_any_tcx(b);
-    want_bar_for_any_ccx(b); //~ ERROR not implemented
+    want_bar_for_any_ccx(b); //~ ERROR E0277
 }
 
 fn main() {}

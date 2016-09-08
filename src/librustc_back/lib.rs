@@ -22,32 +22,32 @@
 //! build speedups.
 
 #![crate_name = "rustc_back"]
-#![experimental]
+#![unstable(feature = "rustc_private", issue = "27812")]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-      html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-      html_root_url = "http://doc.rust-lang.org/nightly/")]
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+      html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+      html_root_url = "https://doc.rust-lang.org/nightly/")]
+#![cfg_attr(not(stage0), deny(warnings))]
 
-#![allow(unknown_features)]
-#![feature(globs, phase, macro_rules, slicing_syntax)]
-#![feature(unboxed_closures)]
+#![feature(box_syntax)]
+#![feature(const_fn)]
+#![feature(libc)]
+#![feature(rand)]
+#![feature(rustc_private)]
+#![feature(staged_api)]
+#![feature(step_by)]
+#![feature(question_mark)]
+#![cfg_attr(test, feature(test, rand))]
 
-#[phase(plugin, link)]
-extern crate log;
 extern crate syntax;
+extern crate libc;
 extern crate serialize;
+#[macro_use] extern crate log;
 
-pub mod abi;
-pub mod archive;
-pub mod arm;
-pub mod fs;
-pub mod mips;
-pub mod mipsel;
+pub mod tempdir;
 pub mod rpath;
 pub mod sha2;
-pub mod svh;
-pub mod target_strs;
-pub mod x86;
-pub mod x86_64;
 pub mod target;
+pub mod slice;
+pub mod dynamic_lib;

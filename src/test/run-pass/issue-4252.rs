@@ -8,31 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(unsafe_destructor)]
-
 trait X {
-    fn call<T: std::fmt::Show>(&self, x: &T);
-    fn default_method<T: std::fmt::Show>(&self, x: &T) {
-        println!("X::default_method {}", x);
+    fn call<T: std::fmt::Debug>(&self, x: &T);
+    fn default_method<T: std::fmt::Debug>(&self, x: &T) {
+        println!("X::default_method {:?}", x);
     }
 }
 
-#[deriving(Show)]
-struct Y(int);
+#[derive(Debug)]
+struct Y(isize);
 
-#[deriving(Show)]
-struct Z<T> {
+#[derive(Debug)]
+struct Z<T: X+std::fmt::Debug> {
     x: T
 }
 
 impl X for Y {
-    fn call<T: std::fmt::Show>(&self, x: &T) {
-        println!("X::call {} {}", self, x);
+    fn call<T: std::fmt::Debug>(&self, x: &T) {
+        println!("X::call {:?} {:?}", self, x);
     }
 }
 
-#[unsafe_destructor]
-impl<T: X + std::fmt::Show> Drop for Z<T> {
+impl<T: X + std::fmt::Debug> Drop for Z<T> {
     fn drop(&mut self) {
         // These statements used to cause an ICE.
         self.x.call(self);

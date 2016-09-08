@@ -10,17 +10,17 @@
 
 //! The exponential distribution.
 
-use core::kinds::Copy;
-use core::num::Float;
+#[cfg(not(test))] // only necessary for no_std
+use FloatMath;
 
-use {Rng, Rand};
-use distributions::{ziggurat, ziggurat_tables, Sample, IndependentSample};
+use {Rand, Rng};
+use distributions::{IndependentSample, Sample, ziggurat, ziggurat_tables};
 
 /// A wrapper around an `f64` to generate Exp(1) random numbers.
 ///
-/// See `Exp` for the general exponential distribution.Note that this
- // has to be unwrapped before use as an `f64` (using either
-/// `*` or `mem::transmute` is safe).
+/// See `Exp` for the general exponential distribution. Note that this has to
+/// be unwrapped before use as an `f64` (using either `*` or `mem::transmute`
+/// is safe).
 ///
 /// Implemented via the ZIGNOR variant[1] of the Ziggurat method. The
 /// exact description in the paper was adjusted to use tables for the
@@ -30,27 +30,28 @@ use distributions::{ziggurat, ziggurat_tables, Sample, IndependentSample};
 /// Generate Normal Random
 /// Samples*](http://www.doornik.com/research/ziggurat.pdf). Nuffield
 /// College, Oxford
+#[derive(Copy, Clone)]
 pub struct Exp1(pub f64);
-
-impl Copy for Exp1 {}
 
 // This could be done via `-rng.gen::<f64>().ln()` but that is slower.
 impl Rand for Exp1 {
     #[inline]
-    fn rand<R:Rng>(rng: &mut R) -> Exp1 {
+    fn rand<R: Rng>(rng: &mut R) -> Exp1 {
         #[inline]
         fn pdf(x: f64) -> f64 {
             (-x).exp()
         }
         #[inline]
-        fn zero_case<R:Rng>(rng: &mut R, _u: f64) -> f64 {
+        fn zero_case<R: Rng>(rng: &mut R, _u: f64) -> f64 {
             ziggurat_tables::ZIG_EXP_R - rng.gen::<f64>().ln()
         }
 
-        Exp1(ziggurat(rng, false,
+        Exp1(ziggurat(rng,
+                      false,
                       &ziggurat_tables::ZIG_EXP_X,
                       &ziggurat_tables::ZIG_EXP_F,
-                      pdf, zero_case))
+                      pdf,
+                      zero_case))
     }
 }
 
@@ -58,23 +59,11 @@ impl Rand for Exp1 {
 ///
 /// This distribution has density function: `f(x) = lambda *
 /// exp(-lambda * x)` for `x > 0`.
-///
-/// # Example
-///
-/// ```rust
-/// use std::rand;
-/// use std::rand::distributions::{Exp, IndependentSample};
-///
-/// let exp = Exp::new(2.0);
-/// let v = exp.ind_sample(&mut rand::task_rng());
-/// println!("{} is from a Exp(2) distribution", v);
-/// ```
+#[derive(Copy, Clone)]
 pub struct Exp {
     /// `lambda` stored as `1/lambda`, since this is what we scale by.
-    lambda_inverse: f64
+    lambda_inverse: f64,
 }
-
-impl Copy for Exp {}
 
 impl Exp {
     /// Construct a new `Exp` with the given shape parameter
@@ -86,7 +75,9 @@ impl Exp {
 }
 
 impl Sample<f64> for Exp {
-    fn sample<R: Rng>(&mut self, rng: &mut R) -> f64 { self.ind_sample(rng) }
+    fn sample<R: Rng>(&mut self, rng: &mut R) -> f64 {
+        self.ind_sample(rng)
+    }
 }
 impl IndependentSample<f64> for Exp {
     fn ind_sample<R: Rng>(&self, rng: &mut R) -> f64 {
@@ -96,28 +87,26 @@ impl IndependentSample<f64> for Exp {
 }
 
 #[cfg(test)]
-mod test {
-    use std::prelude::*;
-
-    use distributions::{Sample, IndependentSample};
+mod tests {
+    use distributions::{IndependentSample, Sample};
     use super::Exp;
 
     #[test]
     fn test_exp() {
         let mut exp = Exp::new(10.0);
         let mut rng = ::test::rng();
-        for _ in range(0u, 1000) {
+        for _ in 0..1000 {
             assert!(exp.sample(&mut rng) >= 0.0);
             assert!(exp.ind_sample(&mut rng) >= 0.0);
         }
     }
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn test_exp_invalid_lambda_zero() {
         Exp::new(0.0);
     }
     #[test]
-    #[should_fail]
+    #[should_panic]
     fn test_exp_invalid_lambda_neg() {
         Exp::new(-10.0);
     }
@@ -126,8 +115,6 @@ mod test {
 #[cfg(test)]
 mod bench {
     extern crate test;
-
-    use std::prelude::*;
 
     use self::test::Bencher;
     use std::mem::size_of;
@@ -140,7 +127,7 @@ mod bench {
         let mut exp = Exp::new(2.71828 * 3.14159);
 
         b.iter(|| {
-            for _ in range(0, ::RAND_BENCH_N) {
+            for _ in 0..::RAND_BENCH_N {
                 exp.sample(&mut rng);
             }
         });

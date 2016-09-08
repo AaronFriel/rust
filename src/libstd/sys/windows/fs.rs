@@ -8,453 +8,745 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Blocking Windows-based file I/O
+use os::windows::prelude::*;
 
-use alloc::arc::Arc;
-use libc::{mod, c_int};
-
-use c_str::CString;
+use ffi::OsString;
+use fmt;
+use io::{self, Error, SeekFrom};
 use mem;
-use os::windoze::fill_utf16_buf_and_decode;
-use path;
+use path::{Path, PathBuf};
 use ptr;
-use str;
-use io;
+use slice;
+use sync::Arc;
+use sys::handle::Handle;
+use sys::time::SystemTime;
+use sys::{c, cvt};
+use sys_common::FromInner;
 
-use prelude::*;
-use sys;
-use sys_common::{keep_going, eof, mkerr_libc};
+use super::to_u16s;
 
-use io::{FilePermission, Write, UnstableFileStat, Open, FileAccess, FileMode};
-use io::{IoResult, IoError, FileStat, SeekStyle, Seek, Writer, Reader};
-use io::{Read, Truncate, SeekCur, SeekSet, ReadWrite, SeekEnd, Append};
+pub struct File { handle: Handle }
 
-pub use path::WindowsPath as Path;
-pub type fd_t = libc::c_int;
-
-pub struct FileDesc {
-    /// The underlying C file descriptor.
-    pub fd: fd_t,
-
-    /// Whether to close the file descriptor on drop.
-    close_on_drop: bool,
+#[derive(Clone)]
+pub struct FileAttr {
+    attributes: c::DWORD,
+    creation_time: c::FILETIME,
+    last_access_time: c::FILETIME,
+    last_write_time: c::FILETIME,
+    file_size: u64,
+    reparse_tag: c::DWORD,
 }
 
-impl FileDesc {
-    pub fn new(fd: fd_t, close_on_drop: bool) -> FileDesc {
-        FileDesc { fd: fd, close_on_drop: close_on_drop }
-    }
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum FileType {
+    Dir, File, SymlinkFile, SymlinkDir, ReparsePoint, MountPoint,
+}
 
-    pub fn read(&self, buf: &mut [u8]) -> IoResult<uint> {
-        let mut read = 0;
-        let ret = unsafe {
-            libc::ReadFile(self.handle(), buf.as_ptr() as libc::LPVOID,
-                           buf.len() as libc::DWORD, &mut read,
-                           ptr::null_mut())
-        };
-        if ret != 0 {
-            Ok(read as uint)
-        } else {
-            Err(super::last_error())
-        }
-    }
+pub struct ReadDir {
+    handle: FindNextFileHandle,
+    root: Arc<PathBuf>,
+    first: Option<c::WIN32_FIND_DATAW>,
+}
 
-    pub fn write(&self, buf: &[u8]) -> IoResult<()> {
-        let mut cur = buf.as_ptr();
-        let mut remaining = buf.len();
-        while remaining > 0 {
-            let mut amt = 0;
-            let ret = unsafe {
-                libc::WriteFile(self.handle(), cur as libc::LPVOID,
-                                remaining as libc::DWORD, &mut amt,
-                                ptr::null_mut())
-            };
-            if ret != 0 {
-                remaining -= amt as uint;
-                cur = unsafe { cur.offset(amt as int) };
-            } else {
-                return Err(super::last_error())
+struct FindNextFileHandle(c::HANDLE);
+
+unsafe impl Send for FindNextFileHandle {}
+unsafe impl Sync for FindNextFileHandle {}
+
+pub struct DirEntry {
+    root: Arc<PathBuf>,
+    data: c::WIN32_FIND_DATAW,
+}
+
+#[derive(Clone)]
+pub struct OpenOptions {
+    // generic
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+    create_new: bool,
+    // system-specific
+    custom_flags: u32,
+    access_mode: Option<c::DWORD>,
+    attributes: c::DWORD,
+    share_mode: c::DWORD,
+    security_qos_flags: c::DWORD,
+    security_attributes: usize, // FIXME: should be a reference
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FilePermissions { attrs: c::DWORD }
+
+pub struct DirBuilder;
+
+impl Iterator for ReadDir {
+    type Item = io::Result<DirEntry>;
+    fn next(&mut self) -> Option<io::Result<DirEntry>> {
+        if let Some(first) = self.first.take() {
+            if let Some(e) = DirEntry::new(&self.root, &first) {
+                return Some(Ok(e));
             }
         }
-        Ok(())
-    }
-
-    pub fn fd(&self) -> fd_t { self.fd }
-
-    pub fn handle(&self) -> libc::HANDLE {
-        unsafe { libc::get_osfhandle(self.fd()) as libc::HANDLE }
-    }
-
-    // A version of seek that takes &self so that tell can call it
-    //   - the private seek should of course take &mut self.
-    fn seek_common(&self, pos: i64, style: SeekStyle) -> IoResult<u64> {
-        let whence = match style {
-            SeekSet => libc::FILE_BEGIN,
-            SeekEnd => libc::FILE_END,
-            SeekCur => libc::FILE_CURRENT,
-        };
         unsafe {
-            let mut newpos = 0;
-            match libc::SetFilePointerEx(self.handle(), pos, &mut newpos, whence) {
-                0 => Err(super::last_error()),
-                _ => Ok(newpos as u64),
+            let mut wfd = mem::zeroed();
+            loop {
+                if c::FindNextFileW(self.handle.0, &mut wfd) == 0 {
+                    if c::GetLastError() == c::ERROR_NO_MORE_FILES {
+                        return None
+                    } else {
+                        return Some(Err(Error::last_os_error()))
+                    }
+                }
+                if let Some(e) = DirEntry::new(&self.root, &wfd) {
+                    return Some(Ok(e))
+                }
             }
         }
     }
+}
 
-    pub fn seek(&mut self, pos: i64, style: SeekStyle) -> IoResult<u64> {
-        self.seek_common(pos, style)
+impl Drop for FindNextFileHandle {
+    fn drop(&mut self) {
+        let r = unsafe { c::FindClose(self.0) };
+        debug_assert!(r != 0);
     }
+}
 
-    pub fn tell(&self) -> IoResult<u64> {
-        self.seek_common(0, SeekCur)
-    }
+impl DirEntry {
+    fn new(root: &Arc<PathBuf>, wfd: &c::WIN32_FIND_DATAW) -> Option<DirEntry> {
+        match &wfd.cFileName[0..3] {
+            // check for '.' and '..'
+            &[46, 0, ..] |
+            &[46, 46, 0, ..] => return None,
+            _ => {}
+        }
 
-    pub fn fsync(&mut self) -> IoResult<()> {
-        super::mkerr_winbool(unsafe {
-            libc::FlushFileBuffers(self.handle())
+        Some(DirEntry {
+            root: root.clone(),
+            data: *wfd,
         })
     }
 
-    pub fn datasync(&mut self) -> IoResult<()> { return self.fsync(); }
+    pub fn path(&self) -> PathBuf {
+        self.root.join(&self.file_name())
+    }
 
-    pub fn truncate(&mut self, offset: i64) -> IoResult<()> {
-        let orig_pos = try!(self.tell());
-        let _ = try!(self.seek(offset, SeekSet));
-        let ret = unsafe {
-            match libc::SetEndOfFile(self.handle()) {
-                0 => Err(super::last_error()),
-                _ => Ok(())
-            }
+    pub fn file_name(&self) -> OsString {
+        let filename = super::truncate_utf16_at_nul(&self.data.cFileName);
+        OsString::from_wide(filename)
+    }
+
+    pub fn file_type(&self) -> io::Result<FileType> {
+        Ok(FileType::new(self.data.dwFileAttributes,
+                         /* reparse_tag = */ self.data.dwReserved0))
+    }
+
+    pub fn metadata(&self) -> io::Result<FileAttr> {
+        Ok(FileAttr {
+            attributes: self.data.dwFileAttributes,
+            creation_time: self.data.ftCreationTime,
+            last_access_time: self.data.ftLastAccessTime,
+            last_write_time: self.data.ftLastWriteTime,
+            file_size: ((self.data.nFileSizeHigh as u64) << 32) | (self.data.nFileSizeLow as u64),
+            reparse_tag: if self.data.dwFileAttributes & c::FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    // reserved unless this is a reparse point
+                    self.data.dwReserved0
+                } else {
+                    0
+                },
+        })
+    }
+}
+
+impl OpenOptions {
+    pub fn new() -> OpenOptions {
+        OpenOptions {
+            // generic
+            read: false,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
+            create_new: false,
+            // system-specific
+            custom_flags: 0,
+            access_mode: None,
+            share_mode: c::FILE_SHARE_READ | c::FILE_SHARE_WRITE | c::FILE_SHARE_DELETE,
+            attributes: 0,
+            security_qos_flags: 0,
+            security_attributes: 0,
+        }
+    }
+
+    pub fn read(&mut self, read: bool) { self.read = read; }
+    pub fn write(&mut self, write: bool) { self.write = write; }
+    pub fn append(&mut self, append: bool) { self.append = append; }
+    pub fn truncate(&mut self, truncate: bool) { self.truncate = truncate; }
+    pub fn create(&mut self, create: bool) { self.create = create; }
+    pub fn create_new(&mut self, create_new: bool) { self.create_new = create_new; }
+
+    pub fn custom_flags(&mut self, flags: u32) { self.custom_flags = flags; }
+    pub fn access_mode(&mut self, access_mode: u32) { self.access_mode = Some(access_mode); }
+    pub fn share_mode(&mut self, share_mode: u32) { self.share_mode = share_mode; }
+    pub fn attributes(&mut self, attrs: u32) { self.attributes = attrs; }
+    pub fn security_qos_flags(&mut self, flags: u32) { self.security_qos_flags = flags; }
+    pub fn security_attributes(&mut self, attrs: c::LPSECURITY_ATTRIBUTES) {
+        self.security_attributes = attrs as usize;
+    }
+
+    fn get_access_mode(&self) -> io::Result<c::DWORD> {
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+
+        match (self.read, self.write, self.append, self.access_mode) {
+            (.., Some(mode)) => Ok(mode),
+            (true,  false, false, None) => Ok(c::GENERIC_READ),
+            (false, true,  false, None) => Ok(c::GENERIC_WRITE),
+            (true,  true,  false, None) => Ok(c::GENERIC_READ | c::GENERIC_WRITE),
+            (false, _,     true,  None) => Ok(c::FILE_GENERIC_WRITE & !c::FILE_WRITE_DATA),
+            (true,  _,     true,  None) => Ok(c::GENERIC_READ |
+                                              (c::FILE_GENERIC_WRITE & !c::FILE_WRITE_DATA)),
+            (false, false, false, None) => Err(Error::from_raw_os_error(ERROR_INVALID_PARAMETER)),
+        }
+    }
+
+    fn get_creation_mode(&self) -> io::Result<c::DWORD> {
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+
+        match (self.write, self.append) {
+            (true, false) => {}
+            (false, false) =>
+                if self.truncate || self.create || self.create_new {
+                    return Err(Error::from_raw_os_error(ERROR_INVALID_PARAMETER));
+                },
+            (_, true) =>
+                if self.truncate && !self.create_new {
+                    return Err(Error::from_raw_os_error(ERROR_INVALID_PARAMETER));
+                },
+        }
+
+        Ok(match (self.create, self.truncate, self.create_new) {
+                (false, false, false) => c::OPEN_EXISTING,
+                (true,  false, false) => c::OPEN_ALWAYS,
+                (false, true,  false) => c::TRUNCATE_EXISTING,
+                (true,  true,  false) => c::CREATE_ALWAYS,
+                (_,      _,    true)  => c::CREATE_NEW,
+           })
+    }
+
+    fn get_flags_and_attributes(&self) -> c::DWORD {
+        self.custom_flags |
+        self.attributes |
+        self.security_qos_flags |
+        if self.security_qos_flags != 0 { c::SECURITY_SQOS_PRESENT } else { 0 } |
+        if self.create_new { c::FILE_FLAG_OPEN_REPARSE_POINT } else { 0 }
+    }
+}
+
+impl File {
+    pub fn open(path: &Path, opts: &OpenOptions) -> io::Result<File> {
+        let path = to_u16s(path)?;
+        let handle = unsafe {
+            c::CreateFileW(path.as_ptr(),
+                           opts.get_access_mode()?,
+                           opts.share_mode,
+                           opts.security_attributes as *mut _,
+                           opts.get_creation_mode()?,
+                           opts.get_flags_and_attributes(),
+                           ptr::null_mut())
         };
-        let _ = self.seek(orig_pos as i64, SeekSet);
-        return ret;
-    }
-
-    pub fn fstat(&self) -> IoResult<io::FileStat> {
-        let mut stat: libc::stat = unsafe { mem::zeroed() };
-        match unsafe { libc::fstat(self.fd(), &mut stat) } {
-            0 => Ok(mkstat(&stat)),
-            _ => Err(super::last_error()),
-        }
-    }
-
-    /// Extract the actual filedescriptor without closing it.
-    pub fn unwrap(self) -> fd_t {
-        let fd = self.fd;
-        unsafe { mem::forget(self) };
-        fd
-    }
-}
-
-impl Drop for FileDesc {
-    fn drop(&mut self) {
-        // closing stdio file handles makes no sense, so never do it. Also, note
-        // that errors are ignored when closing a file descriptor. The reason
-        // for this is that if an error occurs we don't actually know if the
-        // file descriptor was closed or not, and if we retried (for something
-        // like EINTR), we might close another valid file descriptor (opened
-        // after we closed ours.
-        if self.close_on_drop && self.fd > libc::STDERR_FILENO {
-            let n = unsafe { libc::close(self.fd) };
-            if n != 0 {
-                println!("error {} when closing file descriptor {}", n, self.fd);
-            }
-        }
-    }
-}
-
-pub fn to_utf16(s: &Path) -> IoResult<Vec<u16>> {
-    sys::to_utf16(s.as_str())
-}
-
-pub fn open(path: &Path, fm: FileMode, fa: FileAccess) -> IoResult<FileDesc> {
-    // Flags passed to open_osfhandle
-    let flags = match fm {
-        Open => 0,
-        Append => libc::O_APPEND,
-        Truncate => libc::O_TRUNC,
-    };
-    let flags = match fa {
-        Read => flags | libc::O_RDONLY,
-        Write => flags | libc::O_WRONLY | libc::O_CREAT,
-        ReadWrite => flags | libc::O_RDWR | libc::O_CREAT,
-    };
-    let mut dwDesiredAccess = match fa {
-        Read => libc::FILE_GENERIC_READ,
-        Write => libc::FILE_GENERIC_WRITE,
-        ReadWrite => libc::FILE_GENERIC_READ | libc::FILE_GENERIC_WRITE
-    };
-
-    // libuv has a good comment about this, but the basic idea is what we try to
-    // emulate unix semantics by enabling all sharing by allowing things such as
-    // deleting a file while it's still open.
-    let dwShareMode = libc::FILE_SHARE_READ | libc::FILE_SHARE_WRITE |
-                      libc::FILE_SHARE_DELETE;
-
-    let dwCreationDisposition = match (fm, fa) {
-        (Truncate, Read) => libc::TRUNCATE_EXISTING,
-        (Truncate, _) => libc::CREATE_ALWAYS,
-        (Open, Read) => libc::OPEN_EXISTING,
-        (Open, _) => libc::OPEN_ALWAYS,
-        (Append, Read) => {
-            dwDesiredAccess |= libc::FILE_APPEND_DATA;
-            libc::OPEN_EXISTING
-        }
-        (Append, _) => {
-            dwDesiredAccess &= !libc::FILE_WRITE_DATA;
-            dwDesiredAccess |= libc::FILE_APPEND_DATA;
-            libc::OPEN_ALWAYS
-        }
-    };
-
-    let mut dwFlagsAndAttributes = libc::FILE_ATTRIBUTE_NORMAL;
-    // Compat with unix, this allows opening directories (see libuv)
-    dwFlagsAndAttributes |= libc::FILE_FLAG_BACKUP_SEMANTICS;
-
-    let path = try!(to_utf16(path));
-    let handle = unsafe {
-        libc::CreateFileW(path.as_ptr(),
-                          dwDesiredAccess,
-                          dwShareMode,
-                          ptr::null_mut(),
-                          dwCreationDisposition,
-                          dwFlagsAndAttributes,
-                          ptr::null_mut())
-    };
-    if handle == libc::INVALID_HANDLE_VALUE {
-        Err(super::last_error())
-    } else {
-        let fd = unsafe {
-            libc::open_osfhandle(handle as libc::intptr_t, flags)
-        };
-        if fd < 0 {
-            let _ = unsafe { libc::CloseHandle(handle) };
-            Err(super::last_error())
+        if handle == c::INVALID_HANDLE_VALUE {
+            Err(Error::last_os_error())
         } else {
-            Ok(FileDesc::new(fd, true))
+            Ok(File { handle: Handle::new(handle) })
+        }
+    }
+
+    pub fn fsync(&self) -> io::Result<()> {
+        cvt(unsafe { c::FlushFileBuffers(self.handle.raw()) })?;
+        Ok(())
+    }
+
+    pub fn datasync(&self) -> io::Result<()> { self.fsync() }
+
+    pub fn truncate(&self, size: u64) -> io::Result<()> {
+        let mut info = c::FILE_END_OF_FILE_INFO {
+            EndOfFile: size as c::LARGE_INTEGER,
+        };
+        let size = mem::size_of_val(&info);
+        cvt(unsafe {
+            c::SetFileInformationByHandle(self.handle.raw(),
+                                          c::FileEndOfFileInfo,
+                                          &mut info as *mut _ as *mut _,
+                                          size as c::DWORD)
+        })?;
+        Ok(())
+    }
+
+    pub fn file_attr(&self) -> io::Result<FileAttr> {
+        unsafe {
+            let mut info: c::BY_HANDLE_FILE_INFORMATION = mem::zeroed();
+            cvt(c::GetFileInformationByHandle(self.handle.raw(),
+                                              &mut info))?;
+            let mut attr = FileAttr {
+                attributes: info.dwFileAttributes,
+                creation_time: info.ftCreationTime,
+                last_access_time: info.ftLastAccessTime,
+                last_write_time: info.ftLastWriteTime,
+                file_size: ((info.nFileSizeHigh as u64) << 32) | (info.nFileSizeLow as u64),
+                reparse_tag: 0,
+            };
+            if attr.is_reparse_point() {
+                let mut b = [0; c::MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+                if let Ok((_, buf)) = self.reparse_point(&mut b) {
+                    attr.reparse_tag = buf.ReparseTag;
+                }
+            }
+            Ok(attr)
+        }
+    }
+
+    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.handle.read(buf)
+    }
+
+    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        self.handle.read_to_end(buf)
+    }
+
+    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        self.handle.write(buf)
+    }
+
+    pub fn flush(&self) -> io::Result<()> { Ok(()) }
+
+    pub fn seek(&self, pos: SeekFrom) -> io::Result<u64> {
+        let (whence, pos) = match pos {
+            // Casting to `i64` is fine, `SetFilePointerEx` reinterprets this
+            // integer as `u64`.
+            SeekFrom::Start(n) => (c::FILE_BEGIN, n as i64),
+            SeekFrom::End(n) => (c::FILE_END, n),
+            SeekFrom::Current(n) => (c::FILE_CURRENT, n),
+        };
+        let pos = pos as c::LARGE_INTEGER;
+        let mut newpos = 0;
+        cvt(unsafe {
+            c::SetFilePointerEx(self.handle.raw(), pos,
+                                &mut newpos, whence)
+        })?;
+        Ok(newpos as u64)
+    }
+
+    pub fn duplicate(&self) -> io::Result<File> {
+        Ok(File {
+            handle: self.handle.duplicate(0, true, c::DUPLICATE_SAME_ACCESS)?,
+        })
+    }
+
+    pub fn handle(&self) -> &Handle { &self.handle }
+
+    pub fn into_handle(self) -> Handle { self.handle }
+
+    fn reparse_point<'a>(&self,
+                         space: &'a mut [u8; c::MAXIMUM_REPARSE_DATA_BUFFER_SIZE])
+                         -> io::Result<(c::DWORD, &'a c::REPARSE_DATA_BUFFER)> {
+        unsafe {
+            let mut bytes = 0;
+            cvt({
+                c::DeviceIoControl(self.handle.raw(),
+                                   c::FSCTL_GET_REPARSE_POINT,
+                                   ptr::null_mut(),
+                                   0,
+                                   space.as_mut_ptr() as *mut _,
+                                   space.len() as c::DWORD,
+                                   &mut bytes,
+                                   ptr::null_mut())
+            })?;
+            Ok((bytes, &*(space.as_ptr() as *const c::REPARSE_DATA_BUFFER)))
+        }
+    }
+
+    fn readlink(&self) -> io::Result<PathBuf> {
+        let mut space = [0u8; c::MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+        let (_bytes, buf) = self.reparse_point(&mut space)?;
+        unsafe {
+            let (path_buffer, subst_off, subst_len, relative) = match buf.ReparseTag {
+                c::IO_REPARSE_TAG_SYMLINK => {
+                    let info: *const c::SYMBOLIC_LINK_REPARSE_BUFFER =
+                        &buf.rest as *const _ as *const _;
+                    (&(*info).PathBuffer as *const _ as *const u16,
+                     (*info).SubstituteNameOffset / 2,
+                     (*info).SubstituteNameLength / 2,
+                     (*info).Flags & c::SYMLINK_FLAG_RELATIVE != 0)
+                },
+                c::IO_REPARSE_TAG_MOUNT_POINT => {
+                    let info: *const c::MOUNT_POINT_REPARSE_BUFFER =
+                        &buf.rest as *const _ as *const _;
+                    (&(*info).PathBuffer as *const _ as *const u16,
+                     (*info).SubstituteNameOffset / 2,
+                     (*info).SubstituteNameLength / 2,
+                     false)
+                },
+                _ => return Err(io::Error::new(io::ErrorKind::Other,
+                                               "Unsupported reparse point type"))
+            };
+            let subst_ptr = path_buffer.offset(subst_off as isize);
+            let mut subst = slice::from_raw_parts(subst_ptr, subst_len as usize);
+            // Absolute paths start with an NT internal namespace prefix `\??\`
+            // We should not let it leak through.
+            if !relative && subst.starts_with(&[92u16, 63u16, 63u16, 92u16]) {
+                subst = &subst[4..];
+            }
+            Ok(PathBuf::from(OsString::from_wide(subst)))
         }
     }
 }
 
-pub fn mkdir(p: &Path, _mode: uint) -> IoResult<()> {
-    let p = try!(to_utf16(p));
-    super::mkerr_winbool(unsafe {
-        // FIXME: turn mode into something useful? #2623
-        libc::CreateDirectoryW(p.as_ptr(), ptr::null_mut())
-    })
+impl FromInner<c::HANDLE> for File {
+    fn from_inner(handle: c::HANDLE) -> File {
+        File { handle: Handle::new(handle) }
+    }
 }
 
-pub fn readdir(p: &Path) -> IoResult<Vec<Path>> {
-    fn prune(root: &Path, dirs: Vec<Path>) -> Vec<Path> {
-        dirs.into_iter().filter(|path| {
-            path.as_vec() != b"." && path.as_vec() != b".."
-        }).map(|path| root.join(path)).collect()
+impl fmt::Debug for File {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // FIXME(#24570): add more info here (e.g. mode)
+        let mut b = f.debug_struct("File");
+        b.field("handle", &self.handle.raw());
+        if let Ok(path) = get_path(&self) {
+            b.field("path", &path);
+        }
+        b.finish()
+    }
+}
+
+impl FileAttr {
+    pub fn size(&self) -> u64 {
+        self.file_size
     }
 
+    pub fn perm(&self) -> FilePermissions {
+        FilePermissions { attrs: self.attributes }
+    }
+
+    pub fn attrs(&self) -> u32 { self.attributes as u32 }
+
+    pub fn file_type(&self) -> FileType {
+        FileType::new(self.attributes, self.reparse_tag)
+    }
+
+    pub fn modified(&self) -> io::Result<SystemTime> {
+        Ok(SystemTime::from(self.last_write_time))
+    }
+
+    pub fn accessed(&self) -> io::Result<SystemTime> {
+        Ok(SystemTime::from(self.last_access_time))
+    }
+
+    pub fn created(&self) -> io::Result<SystemTime> {
+        Ok(SystemTime::from(self.creation_time))
+    }
+
+    pub fn modified_u64(&self) -> u64 {
+        to_u64(&self.last_write_time)
+    }
+
+    pub fn accessed_u64(&self) -> u64 {
+        to_u64(&self.last_access_time)
+    }
+
+    pub fn created_u64(&self) -> u64 {
+        to_u64(&self.creation_time)
+    }
+
+    fn is_reparse_point(&self) -> bool {
+        self.attributes & c::FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+}
+
+fn to_u64(ft: &c::FILETIME) -> u64 {
+    (ft.dwLowDateTime as u64) | ((ft.dwHighDateTime as u64) << 32)
+}
+
+impl FilePermissions {
+    pub fn readonly(&self) -> bool {
+        self.attrs & c::FILE_ATTRIBUTE_READONLY != 0
+    }
+
+    pub fn set_readonly(&mut self, readonly: bool) {
+        if readonly {
+            self.attrs |= c::FILE_ATTRIBUTE_READONLY;
+        } else {
+            self.attrs &= !c::FILE_ATTRIBUTE_READONLY;
+        }
+    }
+}
+
+impl FileType {
+    fn new(attrs: c::DWORD, reparse_tag: c::DWORD) -> FileType {
+        match (attrs & c::FILE_ATTRIBUTE_DIRECTORY != 0,
+               attrs & c::FILE_ATTRIBUTE_REPARSE_POINT != 0,
+               reparse_tag) {
+            (false, false, _) => FileType::File,
+            (true, false, _) => FileType::Dir,
+            (false, true, c::IO_REPARSE_TAG_SYMLINK) => FileType::SymlinkFile,
+            (true, true, c::IO_REPARSE_TAG_SYMLINK) => FileType::SymlinkDir,
+            (true, true, c::IO_REPARSE_TAG_MOUNT_POINT) => FileType::MountPoint,
+            (_, true, _) => FileType::ReparsePoint,
+            // Note: if a _file_ has a reparse tag of the type IO_REPARSE_TAG_MOUNT_POINT it is
+            // invalid, as junctions always have to be dirs. We set the filetype to ReparsePoint
+            // to indicate it is something symlink-like, but not something you can follow.
+        }
+    }
+
+    pub fn is_dir(&self) -> bool { *self == FileType::Dir }
+    pub fn is_file(&self) -> bool { *self == FileType::File }
+    pub fn is_symlink(&self) -> bool {
+        *self == FileType::SymlinkFile ||
+        *self == FileType::SymlinkDir ||
+        *self == FileType::MountPoint
+    }
+    pub fn is_symlink_dir(&self) -> bool {
+        *self == FileType::SymlinkDir || *self == FileType::MountPoint
+    }
+}
+
+impl DirBuilder {
+    pub fn new() -> DirBuilder { DirBuilder }
+
+    pub fn mkdir(&self, p: &Path) -> io::Result<()> {
+        let p = to_u16s(p)?;
+        cvt(unsafe {
+            c::CreateDirectoryW(p.as_ptr(), ptr::null_mut())
+        })?;
+        Ok(())
+    }
+}
+
+pub fn readdir(p: &Path) -> io::Result<ReadDir> {
+    let root = p.to_path_buf();
     let star = p.join("*");
-    let path = try!(to_utf16(&star));
+    let path = to_u16s(&star)?;
 
     unsafe {
         let mut wfd = mem::zeroed();
-        let find_handle = libc::FindFirstFileW(path.as_ptr(), &mut wfd);
-        if find_handle != libc::INVALID_HANDLE_VALUE {
-            let mut paths = vec![];
-            let mut more_files = 1 as libc::BOOL;
-            while more_files != 0 {
-                {
-                    let filename = str::truncate_utf16_at_nul(&wfd.cFileName);
-                    match String::from_utf16(filename) {
-                        Some(filename) => paths.push(Path::new(filename)),
-                        None => {
-                            assert!(libc::FindClose(find_handle) != 0);
-                            return Err(IoError {
-                                kind: io::InvalidInput,
-                                desc: "path was not valid UTF-16",
-                                detail: Some(format!("path was not valid UTF-16: {}", filename)),
-                            })
-                        }, // FIXME #12056: Convert the UCS-2 to invalid utf-8 instead of erroring
-                    }
-                }
-                more_files = libc::FindNextFileW(find_handle, &mut wfd);
-            }
-            assert!(libc::FindClose(find_handle) != 0);
-            Ok(prune(p, paths))
+        let find_handle = c::FindFirstFileW(path.as_ptr(), &mut wfd);
+        if find_handle != c::INVALID_HANDLE_VALUE {
+            Ok(ReadDir {
+                handle: FindNextFileHandle(find_handle),
+                root: Arc::new(root),
+                first: Some(wfd),
+            })
         } else {
-            Err(super::last_error())
+            Err(Error::last_os_error())
         }
     }
 }
 
-pub fn unlink(p: &Path) -> IoResult<()> {
-    fn do_unlink(p_utf16: &Vec<u16>) -> IoResult<()> {
-        super::mkerr_winbool(unsafe { libc::DeleteFileW(p_utf16.as_ptr()) })
-    }
-
-    let p_utf16 = try!(to_utf16(p));
-    let res = do_unlink(&p_utf16);
-    match res {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            // FIXME: change the code below to use more direct calls
-            // than `stat` and `chmod`, to avoid re-conversion to
-            // utf16 etc.
-
-            // On unix, a readonly file can be successfully removed. On windows,
-            // however, it cannot. To keep the two platforms in line with
-            // respect to their behavior, catch this case on windows, attempt to
-            // change it to read-write, and then remove the file.
-            if e.kind == io::PermissionDenied {
-                let stat = match stat(p) {
-                    Ok(stat) => stat,
-                    Err(..) => return Err(e),
-                };
-                if stat.perm.intersects(io::USER_WRITE) { return Err(e) }
-
-                match chmod(p, (stat.perm | io::USER_WRITE).bits() as uint) {
-                    Ok(()) => do_unlink(&p_utf16),
-                    Err(..) => {
-                        // Try to put it back as we found it
-                        let _ = chmod(p, stat.perm.bits() as uint);
-                        Err(e)
-                    }
-                }
-            } else {
-                Err(e)
-            }
-        }
-    }
-}
-
-pub fn rename(old: &Path, new: &Path) -> IoResult<()> {
-    let old = try!(to_utf16(old));
-    let new = try!(to_utf16(new));
-    super::mkerr_winbool(unsafe {
-        libc::MoveFileExW(old.as_ptr(), new.as_ptr(), libc::MOVEFILE_REPLACE_EXISTING)
-    })
-}
-
-pub fn chmod(p: &Path, mode: uint) -> IoResult<()> {
-    let p = try!(to_utf16(p));
-    mkerr_libc(unsafe {
-        libc::wchmod(p.as_ptr(), mode as libc::c_int)
-    })
-}
-
-pub fn rmdir(p: &Path) -> IoResult<()> {
-    let p = try!(to_utf16(p));
-    mkerr_libc(unsafe { libc::wrmdir(p.as_ptr()) })
-}
-
-pub fn chown(_p: &Path, _uid: int, _gid: int) -> IoResult<()> {
-    // libuv has this as a no-op, so seems like this should as well?
+pub fn unlink(p: &Path) -> io::Result<()> {
+    let p_u16s = to_u16s(p)?;
+    cvt(unsafe { c::DeleteFileW(p_u16s.as_ptr()) })?;
     Ok(())
 }
 
-pub fn readlink(p: &Path) -> IoResult<Path> {
-    // FIXME: I have a feeling that this reads intermediate symlinks as well.
-    use sys::c::compat::kernel32::GetFinalPathNameByHandleW;
-    let p = try!(to_utf16(p));
-    let handle = unsafe {
-        libc::CreateFileW(p.as_ptr(),
-                          libc::GENERIC_READ,
-                          libc::FILE_SHARE_READ,
-                          ptr::null_mut(),
-                          libc::OPEN_EXISTING,
-                          libc::FILE_ATTRIBUTE_NORMAL,
-                          ptr::null_mut())
-    };
-    if handle == libc::INVALID_HANDLE_VALUE {
-        return Err(super::last_error())
+pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
+    let old = to_u16s(old)?;
+    let new = to_u16s(new)?;
+    cvt(unsafe {
+        c::MoveFileExW(old.as_ptr(), new.as_ptr(), c::MOVEFILE_REPLACE_EXISTING)
+    })?;
+    Ok(())
+}
+
+pub fn rmdir(p: &Path) -> io::Result<()> {
+    let p = to_u16s(p)?;
+    cvt(unsafe { c::RemoveDirectoryW(p.as_ptr()) })?;
+    Ok(())
+}
+
+pub fn remove_dir_all(path: &Path) -> io::Result<()> {
+    let filetype = lstat(path)?.file_type();
+    if filetype.is_symlink() {
+        // On Windows symlinks to files and directories are removed differently.
+        // rmdir only deletes dir symlinks and junctions, not file symlinks.
+        rmdir(path)
+    } else {
+        remove_dir_all_recursive(path)
     }
-    // Specify (sz - 1) because the documentation states that it's the size
-    // without the null pointer
-    let ret = fill_utf16_buf_and_decode(|buf, sz| unsafe {
-        GetFinalPathNameByHandleW(handle,
-                                  buf as *const u16,
-                                  sz - 1,
-                                  libc::VOLUME_NAME_DOS)
-    });
-    let ret = match ret {
-        Some(ref s) if s.starts_with(r"\\?\") => { // "
-            Ok(Path::new(s.slice_from(4)))
+}
+
+fn remove_dir_all_recursive(path: &Path) -> io::Result<()> {
+    for child in readdir(path)? {
+        let child = child?;
+        let child_type = child.file_type()?;
+        if child_type.is_dir() {
+            remove_dir_all_recursive(&child.path())?;
+        } else if child_type.is_symlink_dir() {
+            rmdir(&child.path())?;
+        } else {
+            unlink(&child.path())?;
         }
-        Some(s) => Ok(Path::new(s)),
-        None => Err(super::last_error()),
-    };
-    assert!(unsafe { libc::CloseHandle(handle) } != 0);
-    return ret;
+    }
+    rmdir(path)
 }
 
-pub fn symlink(src: &Path, dst: &Path) -> IoResult<()> {
-    use sys::c::compat::kernel32::CreateSymbolicLinkW;
-    let src = try!(to_utf16(src));
-    let dst = try!(to_utf16(dst));
-    super::mkerr_winbool(unsafe {
-        CreateSymbolicLinkW(dst.as_ptr(), src.as_ptr(), 0) as libc::BOOL
-    })
+pub fn readlink(path: &Path) -> io::Result<PathBuf> {
+    // Open the link with no access mode, instead of generic read.
+    // By default FILE_LIST_DIRECTORY is denied for the junction "C:\Documents and Settings", so
+    // this is needed for a common case.
+    let mut opts = OpenOptions::new();
+    opts.access_mode(0);
+    opts.custom_flags(c::FILE_FLAG_OPEN_REPARSE_POINT |
+                      c::FILE_FLAG_BACKUP_SEMANTICS);
+    let file = File::open(&path, &opts)?;
+    file.readlink()
 }
 
-pub fn link(src: &Path, dst: &Path) -> IoResult<()> {
-    let src = try!(to_utf16(src));
-    let dst = try!(to_utf16(dst));
-    super::mkerr_winbool(unsafe {
-        libc::CreateHardLinkW(dst.as_ptr(), src.as_ptr(), ptr::null_mut())
-    })
+pub fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    symlink_inner(src, dst, false)
 }
 
-fn mkstat(stat: &libc::stat) -> FileStat {
-    FileStat {
-        size: stat.st_size as u64,
-        kind: match (stat.st_mode as libc::c_int) & libc::S_IFMT {
-            libc::S_IFREG => io::FileType::RegularFile,
-            libc::S_IFDIR => io::FileType::Directory,
-            libc::S_IFIFO => io::FileType::NamedPipe,
-            libc::S_IFBLK => io::FileType::BlockSpecial,
-            libc::S_IFLNK => io::FileType::Symlink,
-            _ => io::FileType::Unknown,
-        },
-        perm: FilePermission::from_bits_truncate(stat.st_mode as u32),
-        created: stat.st_ctime as u64,
-        modified: stat.st_mtime as u64,
-        accessed: stat.st_atime as u64,
-        unstable: UnstableFileStat {
-            device: stat.st_dev as u64,
-            inode: stat.st_ino as u64,
-            rdev: stat.st_rdev as u64,
-            nlink: stat.st_nlink as u64,
-            uid: stat.st_uid as u64,
-            gid: stat.st_gid as u64,
-            blksize:0,
-            blocks: 0,
-            flags: 0,
-            gen: 0,
-        },
+pub fn symlink_inner(src: &Path, dst: &Path, dir: bool) -> io::Result<()> {
+    let src = to_u16s(src)?;
+    let dst = to_u16s(dst)?;
+    let flags = if dir { c::SYMBOLIC_LINK_FLAG_DIRECTORY } else { 0 };
+    cvt(unsafe {
+        c::CreateSymbolicLinkW(dst.as_ptr(), src.as_ptr(), flags) as c::BOOL
+    })?;
+    Ok(())
+}
+
+pub fn link(src: &Path, dst: &Path) -> io::Result<()> {
+    let src = to_u16s(src)?;
+    let dst = to_u16s(dst)?;
+    cvt(unsafe {
+        c::CreateHardLinkW(dst.as_ptr(), src.as_ptr(), ptr::null_mut())
+    })?;
+    Ok(())
+}
+
+pub fn stat(path: &Path) -> io::Result<FileAttr> {
+    let mut opts = OpenOptions::new();
+    // No read or write permissions are necessary
+    opts.access_mode(0);
+    // This flag is so we can open directories too
+    opts.custom_flags(c::FILE_FLAG_BACKUP_SEMANTICS);
+    let file = File::open(path, &opts)?;
+    file.file_attr()
+}
+
+pub fn lstat(path: &Path) -> io::Result<FileAttr> {
+    let mut opts = OpenOptions::new();
+    // No read or write permissions are necessary
+    opts.access_mode(0);
+    opts.custom_flags(c::FILE_FLAG_BACKUP_SEMANTICS | c::FILE_FLAG_OPEN_REPARSE_POINT);
+    let file = File::open(path, &opts)?;
+    file.file_attr()
+}
+
+pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
+    let p = to_u16s(p)?;
+    unsafe {
+        cvt(c::SetFileAttributesW(p.as_ptr(), perm.attrs))?;
+        Ok(())
     }
 }
 
-pub fn stat(p: &Path) -> IoResult<FileStat> {
-    let mut stat: libc::stat = unsafe { mem::zeroed() };
-    let p = try!(to_utf16(p));
-    match unsafe { libc::wstat(p.as_ptr(), &mut stat) } {
-        0 => Ok(mkstat(&stat)),
-        _ => Err(super::last_error()),
-    }
-}
-
-// FIXME: move this to platform-specific modules (for now)?
-pub fn lstat(_p: &Path) -> IoResult<FileStat> {
-    // FIXME: implementation is missing
-    Err(super::unimpl())
-}
-
-pub fn utime(p: &Path, atime: u64, mtime: u64) -> IoResult<()> {
-    let mut buf = libc::utimbuf {
-        actime: atime as libc::time64_t,
-        modtime: mtime as libc::time64_t,
-    };
-    let p = try!(to_utf16(p));
-    mkerr_libc(unsafe {
-        libc::wutime(p.as_ptr(), &mut buf)
+fn get_path(f: &File) -> io::Result<PathBuf> {
+    super::fill_utf16_buf(|buf, sz| unsafe {
+        c::GetFinalPathNameByHandleW(f.handle.raw(), buf, sz,
+                                     c::VOLUME_NAME_DOS)
+    }, |buf| {
+        PathBuf::from(OsString::from_wide(buf))
     })
+}
+
+pub fn canonicalize(p: &Path) -> io::Result<PathBuf> {
+    let mut opts = OpenOptions::new();
+    // No read or write permissions are necessary
+    opts.access_mode(0);
+    // This flag is so we can open directories too
+    opts.custom_flags(c::FILE_FLAG_BACKUP_SEMANTICS);
+    let f = File::open(p, &opts)?;
+    get_path(&f)
+}
+
+pub fn copy(from: &Path, to: &Path) -> io::Result<u64> {
+    unsafe extern "system" fn callback(
+        _TotalFileSize: c::LARGE_INTEGER,
+        TotalBytesTransferred: c::LARGE_INTEGER,
+        _StreamSize: c::LARGE_INTEGER,
+        _StreamBytesTransferred: c::LARGE_INTEGER,
+        _dwStreamNumber: c::DWORD,
+        _dwCallbackReason: c::DWORD,
+        _hSourceFile: c::HANDLE,
+        _hDestinationFile: c::HANDLE,
+        lpData: c::LPVOID,
+    ) -> c::DWORD {
+        *(lpData as *mut i64) = TotalBytesTransferred;
+        c::PROGRESS_CONTINUE
+    }
+    let pfrom = to_u16s(from)?;
+    let pto = to_u16s(to)?;
+    let mut size = 0i64;
+    cvt(unsafe {
+        c::CopyFileExW(pfrom.as_ptr(), pto.as_ptr(), Some(callback),
+                       &mut size as *mut _ as *mut _, ptr::null_mut(), 0)
+    })?;
+    Ok(size as u64)
+}
+
+#[allow(dead_code)]
+pub fn symlink_junction<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
+    symlink_junction_inner(src.as_ref(), dst.as_ref())
+}
+
+// Creating a directory junction on windows involves dealing with reparse
+// points and the DeviceIoControl function, and this code is a skeleton of
+// what can be found here:
+//
+// http://www.flexhex.com/docs/articles/hard-links.phtml
+#[allow(dead_code)]
+fn symlink_junction_inner(target: &Path, junction: &Path) -> io::Result<()> {
+    let d = DirBuilder::new();
+    d.mkdir(&junction)?;
+
+    let mut opts = OpenOptions::new();
+    opts.write(true);
+    opts.custom_flags(c::FILE_FLAG_OPEN_REPARSE_POINT |
+                      c::FILE_FLAG_BACKUP_SEMANTICS);
+    let f = File::open(junction, &opts)?;
+    let h = f.handle().raw();
+
+    unsafe {
+        let mut data = [0u8; c::MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+        let mut db = data.as_mut_ptr()
+                        as *mut c::REPARSE_MOUNTPOINT_DATA_BUFFER;
+        let buf = &mut (*db).ReparseTarget as *mut _;
+        let mut i = 0;
+        // FIXME: this conversion is very hacky
+        let v = br"\??\";
+        let v = v.iter().map(|x| *x as u16);
+        for c in v.chain(target.as_os_str().encode_wide()) {
+            *buf.offset(i) = c;
+            i += 1;
+        }
+        *buf.offset(i) = 0;
+        i += 1;
+        (*db).ReparseTag = c::IO_REPARSE_TAG_MOUNT_POINT;
+        (*db).ReparseTargetMaximumLength = (i * 2) as c::WORD;
+        (*db).ReparseTargetLength = ((i - 1) * 2) as c::WORD;
+        (*db).ReparseDataLength =
+                (*db).ReparseTargetLength as c::DWORD + 12;
+
+        let mut ret = 0;
+        cvt(c::DeviceIoControl(h as *mut _,
+                               c::FSCTL_SET_REPARSE_POINT,
+                               data.as_ptr() as *mut _,
+                               (*db).ReparseDataLength + 8,
+                               ptr::null_mut(), 0,
+                               &mut ret,
+                               ptr::null_mut())).map(|_| ())
+    }
 }

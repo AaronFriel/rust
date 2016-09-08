@@ -13,18 +13,23 @@
 pub struct Foo;
 impl Foo {
     fn zero(self) -> Foo { self }
-    fn one(self, _: int) -> Foo { self }
-    fn two(self, _: int, _: int) -> Foo { self }
+    fn one(self, _: isize) -> Foo { self }
+    fn two(self, _: isize, _: isize) -> Foo { self }
 }
 
 fn main() {
     let x = Foo;
     x.zero(0)   //~ ERROR this function takes 0 parameters but 1 parameter was supplied
+     //~^ NOTE expected 0 parameters
      .one()     //~ ERROR this function takes 1 parameter but 0 parameters were supplied
+     //~^ NOTE the following parameter type was expected
      .two(0);   //~ ERROR this function takes 2 parameters but 1 parameter was supplied
+     //~^ NOTE the following parameter types were expected
+     //~| NOTE isize, isize
 
     let y = Foo;
     y.zero()
-     .take()    //~ ERROR type `Foo` does not implement any method in scope named `take`
+     .take()    //~ ERROR no method named `take` found for type `Foo` in the current scope
+     //~^ NOTE the method `take` exists but the following trait bounds were not satisfied
      .one(0);
 }

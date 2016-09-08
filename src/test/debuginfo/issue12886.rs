@@ -8,16 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // ignore-windows failing on 64-bit bots FIXME #17638
 // ignore-lldb
+// ignore-aarch64
 
 // compile-flags:-g
 
 // gdb-command:run
 // gdb-command:next
-// gdb-check:[...]32[...]s
+// gdb-check:[...]35[...]s
 // gdb-command:continue
+
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 // IF YOU MODIFY THIS FILE, BE CAREFUL TO ADAPT THE LINE NUMBERS IN THE DEBUGGER COMMANDS
 
@@ -27,7 +30,7 @@
 // contained in the output, after calling `next` just once, we can be sure that we did not stop in
 // unwrap(). (The testing framework doesn't allow for checking that some text is *not* contained in
 // the output, which is why we have to make the test in this kind of roundabout way)
-fn bar() -> int {
+fn bar() -> isize {
     let s = Some(5).unwrap(); // #break
     s
 }

@@ -9,18 +9,28 @@
 // except according to those terms.
 
 // macro f should not be able to inject a reference to 'n'.
-//
-// Ignored because `for` loops are not hygienic yet; they will require special
-// handling since they introduce a new pattern binding position.
 
-// ignore-test
-
-#![feature(macro_rules)]
-
-macro_rules! f(() => (n))
+macro_rules! f { () => (n) }
+//~^ ERROR unresolved name `n`
+//~| ERROR unresolved name `n`
+//~| ERROR unresolved name `n`
+//~| ERROR unresolved name `n`
 
 fn main() -> (){
-    for n in range(0i, 1) {
-        println!("{}", f!()); //~ ERROR unresolved name `n`
+    for n in 0..1 {
+        println!("{}", f!());
+    }
+
+    if let Some(n) = None {
+        println!("{}", f!());
+    }
+
+    if false {
+    } else if let Some(n) = None {
+        println!("{}", f!());
+    }
+
+    while let Some(n) = None {
+        println!("{}", f!());
     }
 }

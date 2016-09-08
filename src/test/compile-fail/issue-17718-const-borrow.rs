@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![feature(const_fn)]
+
 use std::cell::UnsafeCell;
 
-const A: UnsafeCell<uint> = UnsafeCell { value: 1 };
-const B: &'static UnsafeCell<uint> = &A;
+const A: UnsafeCell<usize> = UnsafeCell::new(1);
+const B: &'static UnsafeCell<usize> = &A;
 //~^ ERROR: cannot borrow a constant which contains interior mutability
 
-struct C { a: UnsafeCell<uint> }
-const D: C = C { a: UnsafeCell { value: 1 } };
-const E: &'static UnsafeCell<uint> = &D.a;
+struct C { a: UnsafeCell<usize> }
+const D: C = C { a: UnsafeCell::new(1) };
+const E: &'static UnsafeCell<usize> = &D.a;
 //~^ ERROR: cannot borrow a constant which contains interior mutability
 const F: &'static C = &D;
 //~^ ERROR: cannot borrow a constant which contains interior mutability

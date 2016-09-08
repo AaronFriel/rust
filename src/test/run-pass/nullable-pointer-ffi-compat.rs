@@ -20,16 +20,18 @@
 // then we simply express the enum as just a pointer and not wrap it
 // in a struct.
 
+
 use std::mem;
 
 #[inline(never)]
-extern "C" fn foo<'a>(x: &'a int) -> Option<&'a int> { Some(x) }
+extern "C" fn foo(x: &isize) -> Option<&isize> { Some(x) }
 
-static FOO: int = 0xDEADBEE;
+static FOO: isize = 0xDEADBEE;
 
 pub fn main() {
     unsafe {
-        let f: for<'a> extern "C" fn(&'a int) -> &'a int = mem::transmute(foo);
+        let f: extern "C" fn(&isize) -> &isize =
+            mem::transmute(foo as extern "C" fn(&isize) -> Option<&isize>);
         assert_eq!(*f(&FOO), FOO);
     }
 }

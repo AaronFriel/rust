@@ -1,4 +1,3 @@
-
 // Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
@@ -10,10 +9,10 @@
 // except according to those terms.
 
 
-/// Map representation
+// Map representation
 
-use std::io;
 use std::fmt;
+use std::io::prelude::*;
 use square::{bot, wall, rock, lambda, closed_lift, open_lift, earth, empty};
 
 enum square {
@@ -27,7 +26,7 @@ enum square {
     empty
 }
 
-impl fmt::Show for square {
+impl fmt::Debug for square {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match *self {
           bot => { "R".to_string() }
@@ -59,26 +58,26 @@ fn square_from_char(c: char) -> square {
     }
 }
 
-fn read_board_grid<rdr:'static + io::Reader>(mut input: rdr)
+fn read_board_grid<rdr:'static + Read>(mut input: rdr)
                    -> Vec<Vec<square>> {
-    let mut input: &mut io::Reader = &mut input;
+    let mut input: &mut Read = &mut input;
     let mut grid = Vec::new();
-    let mut line = [0, ..10];
+    let mut line = [0; 10];
     input.read(&mut line);
     let mut row = Vec::new();
-    for c in line.iter() {
+    for c in &line {
         row.push(square_from_char(*c as char))
     }
     grid.push(row);
     let width = grid[0].len();
-    for row in grid.iter() { assert!(row.len() == width) }
+    for row in &grid { assert_eq!(row.len(), width) }
     grid
 }
 
 mod test {
     #[test]
     pub fn trivial_to_string() {
-        assert!(lambda.to_string() == "\\")
+        assert_eq!(lambda.to_string(), "\\")
     }
 }
 

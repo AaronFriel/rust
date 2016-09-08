@@ -11,17 +11,15 @@
 #![cfg(test)]
 
 extern crate test;
-use prelude::*;
 
 use self::test::Bencher;
-use iter::{range_inclusive};
 
 #[bench]
 fn new_drop(b : &mut Bencher) {
     use super::map::HashMap;
 
     b.iter(|| {
-        let m : HashMap<int, int> = HashMap::new();
+        let m : HashMap<i32, i32> = HashMap::new();
         assert_eq!(m.len(), 0);
     })
 }
@@ -32,7 +30,7 @@ fn new_insert_drop(b : &mut Bencher) {
 
     b.iter(|| {
         let mut m = HashMap::new();
-        m.insert(0i, 0i);
+        m.insert(0, 0);
         assert_eq!(m.len(), 1);
     })
 }
@@ -43,7 +41,7 @@ fn grow_by_insertion(b: &mut Bencher) {
 
     let mut m = HashMap::new();
 
-    for i in range_inclusive(1i, 1000) {
+    for i in 1..1001 {
         m.insert(i, i);
     }
 
@@ -61,12 +59,12 @@ fn find_existing(b: &mut Bencher) {
 
     let mut m = HashMap::new();
 
-    for i in range_inclusive(1i, 1000) {
+    for i in 1..1001 {
         m.insert(i, i);
     }
 
     b.iter(|| {
-        for i in range_inclusive(1i, 1000) {
+        for i in 1..1001 {
             m.contains_key(&i);
         }
     });
@@ -78,12 +76,12 @@ fn find_nonexisting(b: &mut Bencher) {
 
     let mut m = HashMap::new();
 
-    for i in range_inclusive(1i, 1000) {
+    for i in 1..1001 {
         m.insert(i, i);
     }
 
     b.iter(|| {
-        for i in range_inclusive(1001i, 2000) {
+        for i in 1001..2001 {
             m.contains_key(&i);
         }
     });
@@ -95,11 +93,11 @@ fn hashmap_as_queue(b: &mut Bencher) {
 
     let mut m = HashMap::new();
 
-    for i in range_inclusive(1i, 1000) {
+    for i in 1..1001 {
         m.insert(i, i);
     }
 
-    let mut k = 1i;
+    let mut k = 1;
 
     b.iter(|| {
         m.remove(&k);
@@ -114,11 +112,11 @@ fn get_remove_insert(b: &mut Bencher) {
 
     let mut m = HashMap::new();
 
-    for i in range_inclusive(1i, 1000) {
+    for i in 1..1001 {
         m.insert(i, i);
     }
 
-    let mut k = 1i;
+    let mut k = 1;
 
     b.iter(|| {
         m.get(&(k + 400));

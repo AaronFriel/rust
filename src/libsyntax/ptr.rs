@@ -10,16 +10,18 @@
 
 //! The AST pointer
 //!
-//! Provides `P<T>`, a frozen owned smart pointer, as a replacement for `@T` in the AST.
+//! Provides `P<T>`, a frozen owned smart pointer, as a replacement for `@T` in
+//! the AST.
 //!
 //! # Motivations and benefits
 //!
-//! * **Identity**: sharing AST nodes is problematic for the various analysis passes
-//!   (e.g. one may be able to bypass the borrow checker with a shared `ExprAddrOf`
-//!   node taking a mutable borrow). The only reason `@T` in the AST hasn't caused
-//!   issues is because of inefficient folding passes which would always deduplicate
-//!   any such shared nodes. Even if the AST were to switch to an arena, this would
-//!   still hold, i.e. it couldn't use `&'a T`, but rather a wrapper like `P<'a, T>`.
+//! * **Identity**: sharing AST nodes is problematic for the various analysis
+//!   passes (e.g. one may be able to bypass the borrow checker with a shared
+//!   `ExprKind::AddrOf` node taking a mutable borrow). The only reason `@T` in the
+//!   AST hasn't caused issues is because of inefficient folding passes which
+//!   would always deduplicate any such shared nodes. Even if the AST were to
+//!   switch to an arena, this would still hold, i.e. it couldn't use `&'a T`,
+//!   but rather a wrapper like `P<'a, T>`.
 //!
 //! * **Immutability**: `P<T>` disallows mutating its inner `T`, unlike `Box<T>`
 //!   (unless it contains an `Unsafe` interior, but that may be denied later).
@@ -34,14 +36,16 @@
 //!   implementation changes (using a special thread-local heap, for example).
 //!   Moreover, a switch to, e.g. `P<'a, T>` would be easy and mostly automated.
 
-use std::fmt;
-use std::fmt::Show;
-use std::hash::Hash;
-use std::ptr;
+use std::fmt::{self, Display, Debug};
+use std::iter::FromIterator;
+use std::ops::Deref;
+use std::{mem, ptr, slice, vec};
+
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 
 /// An owned smart pointer.
-pub struct P<T> {
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct P<T: ?Sized> {
     ptr: Box<T>
 }
 
@@ -49,7 +53,7 @@ pub struct P<T> {
 /// Construct a `P<T>` from a `T` value.
 pub fn P<T: 'static>(value: T) -> P<T> {
     P {
-        ptr: box value
+        ptr: Box::new(value)
     }
 }
 
@@ -61,23 +65,39 @@ impl<T: 'static> P<T> {
     {
         f(*self.ptr)
     }
+    /// Equivalent to and_then(|x| x)
+    pub fn unwrap(self) -> T {
+        *self.ptr
+    }
 
     /// Transform the inner value, consuming `self` and producing a new `P<T>`.
     pub fn map<F>(mut self, f: F) -> P<T> where
         F: FnOnce(T) -> T,
     {
+        let p: *mut T = &mut *self.ptr;
+
+        // Leak self in case of panic.
+        // FIXME(eddyb) Use some sort of "free guard" that
+        // only deallocates, without dropping the pointee,
+        // in case the call the `f` below ends in a panic.
+        mem::forget(self);
+
         unsafe {
-            let p = &mut *self.ptr;
-            // FIXME(#5016) this shouldn't need to zero to be safe.
-            ptr::write(p, f(ptr::read_and_zero(p)));
+            ptr::write(p, f(ptr::read(p)));
+
+            // Recreate self from the raw pointer.
+            P {
+                ptr: Box::from_raw(p)
+            }
         }
-        self
     }
 }
 
-impl<T> Deref<T> for P<T> {
-    fn deref<'a>(&'a self) -> &'a T {
-        &*self.ptr
+impl<T: ?Sized> Deref for P<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.ptr
     }
 }
 
@@ -87,34 +107,110 @@ impl<T: 'static + Clone> Clone for P<T> {
     }
 }
 
-impl<T: PartialEq> PartialEq for P<T> {
-    fn eq(&self, other: &P<T>) -> bool {
-        **self == **other
-    }
-}
-
-impl<T: Eq> Eq for P<T> {}
-
-impl<T: Show> Show for P<T> {
+impl<T: ?Sized + Debug> Debug for P<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
+        Debug::fmt(&self.ptr, f)
     }
 }
 
-impl<S, T: Hash<S>> Hash<S> for P<T> {
-    fn hash(&self, state: &mut S) {
-        (**self).hash(state);
+impl<T: Display> Display for P<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&**self, f)
     }
 }
 
-impl<E, D: Decoder<E>, T: 'static + Decodable<D, E>> Decodable<D, E> for P<T> {
-    fn decode(d: &mut D) -> Result<P<T>, E> {
+impl<T> fmt::Pointer for P<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr, f)
+    }
+}
+
+impl<T: 'static + Decodable> Decodable for P<T> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<P<T>, D::Error> {
         Decodable::decode(d).map(P)
     }
 }
 
-impl<E, S: Encoder<E>, T: Encodable<S, E>> Encodable<S, E> for P<T> {
-    fn encode(&self, s: &mut S) -> Result<(), E> {
+impl<T: Encodable> Encodable for P<T> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
         (**self).encode(s)
+    }
+}
+
+impl<T> P<[T]> {
+    pub fn new() -> P<[T]> {
+        P { ptr: Default::default() }
+    }
+
+    #[inline(never)]
+    pub fn from_vec(v: Vec<T>) -> P<[T]> {
+        P { ptr: v.into_boxed_slice() }
+    }
+
+    #[inline(never)]
+    pub fn into_vec(self) -> Vec<T> {
+        self.ptr.into_vec()
+    }
+}
+
+impl<T> Default for P<[T]> {
+    fn default() -> P<[T]> {
+        P::new()
+    }
+}
+
+impl<T: Clone> Clone for P<[T]> {
+    fn clone(&self) -> P<[T]> {
+        P::from_vec(self.to_vec())
+    }
+}
+
+impl<T> From<Vec<T>> for P<[T]> {
+    fn from(v: Vec<T>) -> Self {
+        P::from_vec(v)
+    }
+}
+
+impl<T> Into<Vec<T>> for P<[T]> {
+    fn into(self) -> Vec<T> {
+        self.into_vec()
+    }
+}
+
+impl<T> FromIterator<T> for P<[T]> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> P<[T]> {
+        P::from_vec(iter.into_iter().collect())
+    }
+}
+
+impl<T> IntoIterator for P<[T]> {
+    type Item = T;
+    type IntoIter = vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a P<[T]> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.ptr.into_iter()
+    }
+}
+
+impl<T: Encodable> Encodable for P<[T]> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        Encodable::encode(&**self, s)
+    }
+}
+
+impl<T: Decodable> Decodable for P<[T]> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<P<[T]>, D::Error> {
+        Ok(P::from_vec(match Decodable::decode(d) {
+            Ok(t) => t,
+            Err(e) => return Err(e)
+        }))
     }
 }

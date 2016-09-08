@@ -9,45 +9,46 @@
 // except according to those terms.
 
 // Test the mechanism for warning about possible missing `self` declarations.
+// ignore-tidy-linelength
 
 trait CtxtFn {
-    fn f8(self, uint) -> uint;
-    fn f9(uint) -> uint; //~ NOTE candidate
+    fn f8(self, usize) -> usize;
+    fn f9(usize) -> usize; //~ NOTE candidate
 }
 
 trait OtherTrait {
-    fn f9(uint) -> uint; //~ NOTE candidate
+    fn f9(usize) -> usize; //~ NOTE candidate
 }
 
 // Note: this trait is not implemented, but we can't really tell
 // whether or not an impl would match anyhow without a self
-// declaration to match against, so we wind up printing it as a
+// declaration to match against, so we wind up prisizeing it as a
 // candidate. This seems not unreasonable -- perhaps the user meant to
 // implement it, after all.
 trait UnusedTrait {
-    fn f9(uint) -> uint; //~ NOTE candidate
+    fn f9(usize) -> usize; //~ NOTE candidate
 }
 
-impl CtxtFn for uint {
-    fn f8(self, i: uint) -> uint {
-        i * 4u
+impl CtxtFn for usize {
+    fn f8(self, i: usize) -> usize {
+        i * 4
     }
 
-    fn f9(i: uint) -> uint {
-        i * 4u
-    }
-}
-
-impl OtherTrait for uint {
-    fn f9(i: uint) -> uint {
-        i * 8u
+    fn f9(i: usize) -> usize {
+        i * 4
     }
 }
 
-struct MyInt(int);
+impl OtherTrait for usize {
+    fn f9(i: usize) -> usize {
+        i * 8
+    }
+}
 
-impl MyInt {
-    fn fff(i: int) -> int { //~ NOTE candidate
+struct Myisize(isize);
+
+impl Myisize {
+    fn fff(i: isize) -> isize { //~ NOTE candidate
         i
     }
 }
@@ -64,23 +65,23 @@ impl ManyImplTrait for String {
     }
 }
 
-impl ManyImplTrait for uint {}
-impl ManyImplTrait for int {}
+impl ManyImplTrait for usize {}
+impl ManyImplTrait for isize {}
 impl ManyImplTrait for char {}
-impl ManyImplTrait for MyInt {}
+impl ManyImplTrait for Myisize {}
 
-fn no_param_bound(u: uint, m: MyInt) -> uint {
+fn no_param_bound(u: usize, m: Myisize) -> usize {
     u.f8(42) + u.f9(342) + m.fff(42)
-            //~^ ERROR type `uint` does not implement any method in scope named `f9`
-            //~^^ NOTE found defined static methods, maybe a `self` is missing?
-                        //~^^^ ERROR type `MyInt` does not implement any method in scope named `fff`
-                        //~^^^^ NOTE found defined static methods, maybe a `self` is missing?
+            //~^ ERROR no method named `f9` found for type `usize` in the current scope
+            //~^^ NOTE found the following associated functions; to be used as methods, functions must have a `self` parameter
+            //~^^^ ERROR no method named `fff` found for type `Myisize` in the current scope
+            //~^^^^ NOTE found the following associated functions; to be used as methods, functions must have a `self` parameter
 }
 
 fn param_bound<T: ManyImplTrait>(t: T) -> bool {
     t.is_str()
-    //~^ ERROR type `T` does not implement any method in scope named `is_str`
-    //~^^ NOTE found defined static methods, maybe a `self` is missing?
+    //~^ ERROR no method named `is_str` found for type `T` in the current scope
+    //~^^ NOTE found the following associated functions; to be used as methods, functions must have a `self` parameter
 }
 
 fn main() {

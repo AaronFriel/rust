@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -132,10 +131,12 @@
 // lldb-check:[...]$12 = 2
 // lldb-command:continue
 
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 fn main() {
 
-    let mut x = 0i;
+    let mut x = 0;
 
     while x < 2 {
         zzz(); // #break
@@ -155,7 +156,7 @@ fn main() {
             zzz(); // #break
             sentinel();
 
-            let x = -987i;
+            let x = -987;
 
             zzz(); // #break
             sentinel();

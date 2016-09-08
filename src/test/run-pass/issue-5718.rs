@@ -8,22 +8,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(macro_rules)]
+// pretty-expanded FIXME #23616
+
+#![allow(unknown_features)]
+#![feature(box_syntax)]
 
 struct Element;
 
 macro_rules! foo {
     ($tag: expr, $string: expr) => {
         if $tag == $string {
-            let element = box Element;
+            let element: Box<_> = box Element;
             unsafe {
-                return std::mem::transmute::<_, uint>(element);
+                return std::mem::transmute::<_, usize>(element);
             }
         }
     }
 }
 
-fn bar() -> uint {
+fn bar() -> usize {
     foo!("a", "b");
     0
 }

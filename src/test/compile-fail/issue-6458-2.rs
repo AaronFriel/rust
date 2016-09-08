@@ -1,4 +1,4 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2013-2015 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -10,6 +10,6 @@
 
 fn main() {
     // Unconstrained type:
-    format!("{}", None);
-    //~^ ERROR type annotations required
+    format!("{:?}", None);
+    //~^ ERROR unable to infer enough type information about `_` [E0282]
 }

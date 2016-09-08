@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[deriving(Show)]
+#[derive(Debug)]
 struct r {
   b: bool,
 }
@@ -18,7 +18,8 @@ impl Drop for r {
 }
 
 fn main() {
-    let i = box r { b: true };
-    let _j = i.clone(); //~ ERROR not implement
-    println!("{}", i);
+    // FIXME (#22405): Replace `Box::new` with `box` here when/if possible.
+    let i = Box::new(r { b: true });
+    let _j = i.clone(); //~ ERROR no method named `clone` found
+    println!("{:?}", i);
 }

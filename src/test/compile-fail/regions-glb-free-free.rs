@@ -11,9 +11,9 @@
 mod argparse {
     pub struct Flag<'a> {
         name: &'a str,
-        desc: &'a str,
-        max_count: uint,
-        value: uint
+        pub desc: &'a str,
+        max_count: usize,
+        value: usize
     }
 
     pub fn flag<'r>(name: &'r str, desc: &'r str) -> Flag<'r> {
@@ -22,9 +22,9 @@ mod argparse {
 
     impl<'a> Flag<'a> {
         pub fn set_desc(self, s: &str) -> Flag<'a> {
-            Flag {
+            Flag { //~ ERROR cannot infer
                 name: self.name,
-                desc: s, //~ ERROR cannot infer an appropriate lifetime for automatic coercion due t
+                desc: s,
                 max_count: self.max_count,
                 value: self.value
             }
@@ -35,5 +35,5 @@ mod argparse {
 fn main () {
     let f : argparse::Flag = argparse::flag("flag", "My flag");
     let updated_flag = f.set_desc("My new flag");
-    assert_eq!(updated_flag.desc.as_slice(), "My new flag");
+    assert_eq!(updated_flag.desc, "My new flag");
 }

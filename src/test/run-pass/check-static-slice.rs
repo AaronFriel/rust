@@ -11,30 +11,34 @@
 // Check that the various ways of getting to a reference to a vec (both sized
 // and unsized) work properly.
 
-const aa: [int, ..3] = [1, 2, 3];
-const ab: &'static [int, ..3] = &aa;
-const ac: &'static [int] = ab;
-const ad: &'static [int] = &aa;
-const ae: &'static [int, ..3] = &[1, 2, 3];
-const af: &'static [int] = &[1, 2, 3];
 
-static ca: int = aa[0];
-static cb: int = ab[1];
-static cc: int = ac[2];
-static cd: int = ad[0];
-static ce: int = ae[1];
-static cf: int = af[2];
+const AA: [isize; 3] = [1, 2, 3];
+const AB: &'static [isize; 3] = &AA;
+const AC: &'static [isize] = AB;
+const AD: &'static [isize] = &AA;
+const AE: &'static [isize; 3] = &[1, 2, 3];
+const AF: &'static [isize] = &[1, 2, 3];
+
+static CA: isize = AA[0];
+static CB: isize = AB[1];
+static CC: isize = AC[2];
+static CD: isize = AD[0];
+static CE: isize = AE[1];
+static CF: isize = AF[2];
+
+static AG: &'static isize = &AA[2];
 
 fn main () {
-    let b: &[int] = &[1, 2, 3];
-    assert!(ac == b);
-    assert!(ad == b);
-    assert!(af == b);
+    let b: &[isize] = &[1, 2, 3];
+    assert_eq!(AC, b);
+    assert_eq!(AD, b);
+    assert_eq!(AF, b);
+    assert_eq!(*AG, 3);
 
-    assert!(ca == 1);
-    assert!(cb == 2);
-    assert!(cc == 3);
-    assert!(cd == 1);
-    assert!(ce == 2);
-    assert!(cf == 3);
+    assert_eq!(CA, 1);
+    assert_eq!(CB, 2);
+    assert_eq!(CC, 3);
+    assert_eq!(CD, 1);
+    assert_eq!(CE, 2);
+    assert_eq!(CF, 3);
 }

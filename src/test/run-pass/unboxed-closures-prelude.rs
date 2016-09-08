@@ -10,19 +10,18 @@
 
 // Tests that the reexports of `FnOnce` et al from the prelude work.
 
-#![feature(unboxed_closures)]
+// pretty-expanded FIXME #23616
 
 fn main() {
-    let task: Box<Fn(int) -> int> = box |&: x| x;
-    task.call((0i, ));
+    let task: Box<Fn(isize) -> isize> = Box::new(|x| x);
+    task(0);
 
-    let mut task: Box<FnMut(int) -> int> = box |&mut: x| x;
-    task.call_mut((0i, ));
+    let mut task: Box<FnMut(isize) -> isize> = Box::new(|x| x);
+    task(0);
 
-    call(|:x| x, 22);
+    call(|x| x, 22);
 }
 
-fn call<F:FnOnce(int) -> int>(f: F, x: int) -> int {
-    f.call_once((x,))
+fn call<F:FnOnce(isize) -> isize>(f: F, x: isize) -> isize {
+    f(x)
 }
-

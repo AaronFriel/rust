@@ -8,15 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-
-
 pub trait AbstractRenderer {}
 
 fn _create_render(_: &()) ->
     AbstractRenderer
-//~^ ERROR: the trait `core::kinds::Sized` is not implemented
+//~^ ERROR: `AbstractRenderer + 'static: std::marker::Sized` is not satisfied
 {
-    match 0u {
+    match 0 {
         _ => unimplemented!()
     }
 }

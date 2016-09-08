@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
-// ignore-test: Not sure what is going on here --pcwalton
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -87,17 +85,20 @@
 // lldb-check:[...]$6 = 1000000
 // lldb-command:continue
 
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
+
 fn main() {
 
-    let range = [1i, 2, 3];
+    let range = [1, 2, 3];
 
-    let x = 1000000i; // wan meeeljen doollaars!
+    let x = 1000000; // wan meeeljen doollaars!
 
-    for &x in range.iter() {
+    for &x in &range {
         zzz(); // #break
         sentinel();
 
-        let x = -1i * x;
+        let x = -1 * x;
 
         zzz(); // #break
         sentinel();

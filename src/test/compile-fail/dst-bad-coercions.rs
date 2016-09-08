@@ -14,17 +14,17 @@ struct S;
 trait T {}
 impl T for S {}
 
-struct Foo<Sized? T> {
+struct Foo<T: ?Sized> {
     f: T
 }
 
 pub fn main() {
-    // Test that we cannot convert from *-ptr to &-ptr
+    // Test that we cannot convert from *-ptr to &S and &T
     let x: *const S = &S;
     let y: &S = x; //~ ERROR mismatched types
     let y: &T = x; //~ ERROR mismatched types
 
-    // Test that we cannot convert from *-ptr to &-ptr (mut version)
+    // Test that we cannot convert from *-ptr to &S and &T (mut version)
     let x: *mut S = &mut S;
     let y: &S = x; //~ ERROR mismatched types
     let y: &T = x; //~ ERROR mismatched types
@@ -33,18 +33,4 @@ pub fn main() {
     let x: &mut T = &S; //~ ERROR mismatched types
     let x: *mut T = &S; //~ ERROR mismatched types
     let x: *mut S = &S; //~ ERROR mismatched types
-
-    // The below four sets of tests test that we cannot implicitly deref a *-ptr
-    // during a coercion.
-    let x: *const S = &S;
-    let y: *const T = x;  //~ ERROR mismatched types
-
-    let x: *mut S = &mut S;
-    let y: *mut T = x;  //~ ERROR mismatched types
-
-    let x: *const Foo<S> = &Foo {f: S};
-    let y: *const Foo<T> = x;  //~ ERROR mismatched types
-
-    let x: *mut Foo<S> = &mut Foo {f: S};
-    let y: *mut Foo<T> = x;  //~ ERROR mismatched types
 }

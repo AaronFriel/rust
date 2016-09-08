@@ -8,9 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+
 enum E {
     S0 { s: String },
-    S1 { u: uint }
+    S1 { u: usize }
 }
 
 static C: E = E::S1 { u: 23 };
@@ -18,6 +19,6 @@ static C: E = E::S1 { u: 23 };
 pub fn main() {
     match C {
         E::S0 { .. } => panic!(),
-        E::S1 { u } => assert!(u == 23)
+        E::S1 { u } => assert_eq!(u, 23)
     }
 }

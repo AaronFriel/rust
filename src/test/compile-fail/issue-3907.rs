@@ -14,11 +14,12 @@ extern crate issue_3907;
 type Foo = issue_3907::Foo;
 
 struct S {
-    name: int
+    name: isize
 }
 
 impl Foo for S { //~ ERROR: `Foo` is not a trait
-    //~^ NOTE: `type` aliases cannot be used for traits
+                 //~| NOTE: not a trait
+                 //~| NOTE: type aliases cannot be used for traits
     fn bar() { }
 }
 
@@ -28,4 +29,3 @@ fn main() {
     };
     s.bar();
 }
-

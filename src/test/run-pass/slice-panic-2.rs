@@ -8,30 +8,31 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Test that is a slicing expr[..] fails, the correct cleanups happen.
+// ignore-emscripten no threads support
 
-#![feature(slicing_syntax)]
+// Test that if a slicing expr[..] fails, the correct cleanups happen.
 
-use std::task;
+
+use std::thread;
 
 struct Foo;
 
-static mut DTOR_COUNT: int = 0;
+static mut DTOR_COUNT: isize = 0;
 
 impl Drop for Foo {
     fn drop(&mut self) { unsafe { DTOR_COUNT += 1; } }
 }
 
-fn bar() -> uint {
+fn bar() -> usize {
     panic!();
 }
 
 fn foo() {
     let x: &[_] = &[Foo, Foo];
-    x[3..bar()];
+    &x[3..bar()];
 }
 
 fn main() {
-    let _ = task::try(move|| foo());
-    unsafe { assert!(DTOR_COUNT == 2); }
+    let _ = thread::spawn(move|| foo()).join();
+    unsafe { assert_eq!(DTOR_COUNT, 2); }
 }

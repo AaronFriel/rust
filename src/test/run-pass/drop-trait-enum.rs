@@ -8,9 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::task;
+// ignore-emscripten no threads support
 
-#[deriving(PartialEq, Show)]
+#![allow(unknown_features)]
+#![feature(box_syntax)]
+
+use std::thread;
+use std::sync::mpsc::{channel, Sender};
+
+#[derive(PartialEq, Debug)]
 enum Message {
     Dropped,
     DestructorRan
@@ -22,26 +28,26 @@ struct SendOnDrop {
 
 impl Drop for SendOnDrop {
     fn drop(&mut self) {
-        self.sender.send(Message::Dropped);
+        self.sender.send(Message::Dropped).unwrap();
     }
 }
 
 enum Foo {
     SimpleVariant(Sender<Message>),
-    NestedVariant(Box<uint>, SendOnDrop, Sender<Message>),
+    NestedVariant(Box<usize>, SendOnDrop, Sender<Message>),
     FailingVariant { on_drop: SendOnDrop }
 }
 
 impl Drop for Foo {
     fn drop(&mut self) {
         match self {
-            &Foo::SimpleVariant(ref mut sender) => {
-                sender.send(Message::DestructorRan);
+            &mut Foo::SimpleVariant(ref mut sender) => {
+                sender.send(Message::DestructorRan).unwrap();
             }
-            &Foo::NestedVariant(_, _, ref mut sender) => {
-                sender.send(Message::DestructorRan);
+            &mut Foo::NestedVariant(_, _, ref mut sender) => {
+                sender.send(Message::DestructorRan).unwrap();
             }
-            &Foo::FailingVariant { .. } => {
+            &mut Foo::FailingVariant { .. } => {
                 panic!("Failed");
             }
         }
@@ -53,40 +59,44 @@ pub fn main() {
     {
         let v = Foo::SimpleVariant(sender);
     }
-    assert_eq!(receiver.recv(), Message::DestructorRan);
-    assert_eq!(receiver.recv_opt().ok(), None);
+    assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
+    assert_eq!(receiver.recv().ok(), None);
 
     let (sender, receiver) = channel();
     {
-        let v = Foo::NestedVariant(box 42u, SendOnDrop { sender: sender.clone() }, sender);
+        let v = Foo::NestedVariant(box 42, SendOnDrop { sender: sender.clone() }, sender);
     }
-    assert_eq!(receiver.recv(), Message::DestructorRan);
-    assert_eq!(receiver.recv(), Message::Dropped);
-    assert_eq!(receiver.recv_opt().ok(), None);
+    assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
+    assert_eq!(receiver.recv().unwrap(), Message::Dropped);
+    assert_eq!(receiver.recv().ok(), None);
 
     let (sender, receiver) = channel();
-    task::spawn(move|| {
+    let t = thread::spawn(move|| {
         let v = Foo::FailingVariant { on_drop: SendOnDrop { sender: sender } };
     });
-    assert_eq!(receiver.recv(), Message::Dropped);
-    assert_eq!(receiver.recv_opt().ok(), None);
+    assert_eq!(receiver.recv().unwrap(), Message::Dropped);
+    assert_eq!(receiver.recv().ok(), None);
+    drop(t.join());
 
     let (sender, receiver) = channel();
-    {
-        task::spawn(move|| {
-            let mut v = Foo::NestedVariant(box 42u, SendOnDrop {
+    let t = {
+        thread::spawn(move|| {
+            let mut v = Foo::NestedVariant(box 42, SendOnDrop {
                 sender: sender.clone()
             }, sender.clone());
-            v = Foo::NestedVariant(box 42u, SendOnDrop { sender: sender.clone() }, sender.clone());
+            v = Foo::NestedVariant(box 42,
+                                   SendOnDrop { sender: sender.clone() },
+                                   sender.clone());
             v = Foo::SimpleVariant(sender.clone());
             v = Foo::FailingVariant { on_drop: SendOnDrop { sender: sender } };
-        });
-    }
-    assert_eq!(receiver.recv(), Message::DestructorRan);
-    assert_eq!(receiver.recv(), Message::Dropped);
-    assert_eq!(receiver.recv(), Message::DestructorRan);
-    assert_eq!(receiver.recv(), Message::Dropped);
-    assert_eq!(receiver.recv(), Message::DestructorRan);
-    assert_eq!(receiver.recv(), Message::Dropped);
-    assert_eq!(receiver.recv_opt().ok(), None);
+        })
+    };
+    assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
+    assert_eq!(receiver.recv().unwrap(), Message::Dropped);
+    assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
+    assert_eq!(receiver.recv().unwrap(), Message::Dropped);
+    assert_eq!(receiver.recv().unwrap(), Message::DestructorRan);
+    assert_eq!(receiver.recv().unwrap(), Message::Dropped);
+    assert_eq!(receiver.recv().ok(), None);
+    drop(t.join());
 }

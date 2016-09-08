@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(associated_types)]
 
 trait Get {
     type Value;
@@ -16,12 +15,12 @@ trait Get {
 }
 
 struct Struct {
-    x: int,
+    x: isize,
 }
 
 impl Get for Struct {
-    type Value = int;
-    fn get(&self) -> &int {
+    type Value = isize;
+    fn get(&self) -> &isize {
         &self.x
     }
 }
@@ -36,4 +35,3 @@ fn main() {
     };
     assert_eq!(*grab(&s), 100);
 }
-

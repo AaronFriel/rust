@@ -12,10 +12,10 @@ trait IDummy {
     fn do_nothing(&self);
 }
 
-#[deriving(Show)]
-struct A { a: int }
-#[deriving(Show)]
-struct B<'a> { b: int, pa: &'a A }
+#[derive(Debug)]
+struct A { a: isize }
+#[derive(Debug)]
+struct B<'a> { b: isize, pa: &'a A }
 
     impl IDummy for A {
         fn do_nothing(&self) {
@@ -31,6 +31,6 @@ pub fn main() {
     let sa = A { a: 100 };
     let sb = B { b: 200, pa: &sa };
 
-    println!("sa is {}", sa);
-    println!("sb is {}", sb);
+    println!("sa is {:?}", sa);
+    println!("sb is {:?}", sb);
 }

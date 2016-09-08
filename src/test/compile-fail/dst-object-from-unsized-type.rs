@@ -10,27 +10,28 @@
 
 // Test that we cannot create objects from unsized types.
 
-trait Foo for Sized? {}
+trait Foo { fn foo(&self) {} }
 impl Foo for str {}
+impl Foo for [u8] {}
 
-fn test1<Sized? T: Foo>(t: &T) {
+fn test1<T: ?Sized + Foo>(t: &T) {
     let u: &Foo = t;
-    //~^ ERROR `core::kinds::Sized` is not implemented for the type `T`
+    //~^ ERROR `T: std::marker::Sized` is not satisfied
 }
 
-fn test2<Sized? T: Foo>(t: &T) {
+fn test2<T: ?Sized + Foo>(t: &T) {
     let v: &Foo = t as &Foo;
-    //~^ ERROR `core::kinds::Sized` is not implemented for the type `T`
+    //~^ ERROR `T: std::marker::Sized` is not satisfied
 }
 
 fn test3() {
     let _: &[&Foo] = &["hi"];
-    //~^ ERROR `core::kinds::Sized` is not implemented for the type `str`
+    //~^ ERROR `str: std::marker::Sized` is not satisfied
 }
 
-fn test4() {
-    let _: &Foo = "hi" as &Foo;
-    //~^ ERROR `core::kinds::Sized` is not implemented for the type `str`
+fn test4(x: &[u8]) {
+    let _: &Foo = x as &Foo;
+    //~^ ERROR `[u8]: std::marker::Sized` is not satisfied
 }
 
 fn main() { }

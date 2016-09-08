@@ -12,6 +12,9 @@
 // where possible, by having a type that panics when compared as the
 // second element, so this passes iff the instances shortcircuit.
 
+
+use std::cmp::Ordering;
+
 pub struct FailCmp;
 impl PartialEq for FailCmp {
     fn eq(&self, _: &FailCmp) -> bool { panic!("eq") }
@@ -27,9 +30,9 @@ impl Ord for FailCmp {
     fn cmp(&self, _: &FailCmp) -> Ordering { panic!("cmp") }
 }
 
-#[deriving(PartialEq,PartialOrd,Eq,Ord)]
+#[derive(PartialEq,PartialOrd,Eq,Ord)]
 struct ShortCircuit {
-    x: int,
+    x: isize,
     y: FailCmp
 }
 

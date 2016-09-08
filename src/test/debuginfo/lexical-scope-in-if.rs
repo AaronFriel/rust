@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-android: FIXME(#10381)
 // min-lldb-version: 310
 
 // compile-flags:-g
@@ -134,11 +133,13 @@
 // lldb-check:[...]$15 = -1
 // lldb-command:continue
 
+#![feature(omit_gdb_pretty_printer_section)]
+#![omit_gdb_pretty_printer_section]
 
 fn main() {
 
-    let x = 999i;
-    let y = -1i;
+    let x = 999;
+    let y = -1;
 
     zzz(); // #break
     sentinel();
@@ -147,13 +148,13 @@ fn main() {
         zzz(); // #break
         sentinel();
 
-        let x = 1001i;
+        let x = 1001;
 
         zzz(); // #break
         sentinel();
 
-        let x = 1002i;
-        let y = 1003i;
+        let x = 1002;
+        let y = 1003;
         zzz(); // #break
         sentinel();
     } else {
@@ -169,8 +170,8 @@ fn main() {
         zzz(); // #break
         sentinel();
 
-        let x = 1004i;
-        let y = 1005i;
+        let x = 1004;
+        let y = 1005;
         zzz(); // #break
         sentinel();
     }

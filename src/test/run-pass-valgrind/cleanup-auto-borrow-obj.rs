@@ -8,11 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// no-prefer-dynamic
 
 // This would previously leak the Box<Trait> because we wouldn't
 // schedule cleanups when auto borrowing trait objects.
 // This program should be valgrind clean.
 
+#![feature(box_syntax)]
 
 static mut DROP_RAN: bool = false;
 
@@ -24,7 +26,7 @@ impl Drop for Foo {
 }
 
 
-trait Trait {}
+trait Trait { fn dummy(&self) { } }
 impl Trait for Foo {}
 
 pub fn main() {
@@ -35,4 +37,3 @@ pub fn main() {
         assert!(DROP_RAN);
     }
 }
-

@@ -8,15 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// ignore-tidy-linelength
-
 struct Foo {
-    x: int
+    x: isize
 }
 
-impl Fo { //~ERROR inherent implementations are not allowed for types not defined in the current module
+impl Fo { //~ ERROR type name `Fo` is undefined or not in scope
     fn foo() {}
 }
 
 fn main() {}
-
